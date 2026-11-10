@@ -2,7 +2,8 @@
 #   powershell -ExecutionPolicy Bypass -File arm\push-pi.ps1 file1 [file2 ...] [-Port COM16]
 #   powershell -ExecutionPolicy Bypass -File arm\push-pi.ps1 -Packages   (all Pi packages)
 # Each file is saved in MyFS under its own name (e.g. calc.pkg, game.py).
-param([Parameter(ValueFromRemainingArguments)][string[]]$Files, [string]$Port, [switch]$Packages)
+param([Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$Files,
+      [string]$Port, [switch]$Packages)
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 

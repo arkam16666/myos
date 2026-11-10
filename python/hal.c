@@ -17,9 +17,19 @@ mp_uint_t mp_hal_ticks_us(void) {
 }
 
 mp_uint_t mp_hal_ticks_cpu(void) {
+#if defined(__x86_64__)
     uint32_t lo, hi;
-    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));    // CPU cycle counter
     return ((mp_uint_t)hi << 32) | lo;
+#else
+    return (mp_uint_t)sys_ticks();                      // no counter EL0 may read
+#endif
+}
+
+// seed for the random module: something different every run
+uint32_t myos_random_seed(void) {
+    uint64_t t = mp_hal_ticks_cpu() ^ (sys_ticks() * 2654435761u);
+    return (uint32_t)(t ^ (t >> 32));
 }
 
 uint64_t mp_hal_time_ns(void) {

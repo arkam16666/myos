@@ -73,7 +73,16 @@ powershell -ExecutionPolicy Bypass -File arm\update-pi.ps1
 
 **ใช้งาน:** เสียบสาย USB เข้าช่อง **USB** ของ Pi (ช่องกลาง) MyOS จะขึ้นเป็นพอร์ต COM ใหม่ เปิดด้วย PuTTY (Serial) ไฟ LED สีเขียวกะพริบ "ติ๊ก-ติ๊ก… เว้น" = MyOS รันอยู่, กะพริบรัวเร็ว = พัง
 
-คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cat`, `write`, `rm`, `format`, `update`, `reboot` ไฟล์ใน `myfs.img` จัดการจาก Windows ได้ด้วย `tools\myfs.py` (ตอนการ์ดอยู่ในตัวอ่าน)
+คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cat`, `write`, `rm`, `format`, `pkg`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
+
+**ส่งไฟล์เข้า Pi ผ่าน USB** (แพ็กเกจ, ไฟล์ `.py` ฯลฯ):
+```powershell
+powershell -ExecutionPolicy Bypass -File arm\push-pi.ps1 -Packages            # แพ็กเกจทั้งหมดสำหรับ Pi
+powershell -ExecutionPolicy Bypass -File arm\push-pi.ps1 files\game.py        # ไฟล์ใดก็ได้
+```
+แล้วใน MyOS: `pkg list`, `pkg install python`, `python game.py` แพ็กเกจสำหรับ Pi build จาก `packages\*.c` ชุดเดียวกับ MyOS PC ไว้ที่ `arm\build\packages\`
+
+ตอนการ์ดอยู่ในตัวอ่าน จัดการไฟล์ใน `myfs.img` จาก Windows ได้ด้วย `tools\myfs.py` เหมือนกัน
 
 **กลับไปใช้ Linux:** ในไดรฟ์ `bootfs` ลบ `config.txt` แล้วเปลี่ยนชื่อ `config.txt.linux-backup` เป็น `config.txt`
 

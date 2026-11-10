@@ -6,18 +6,19 @@
 
 | | MyOS PC (x86-64) | MyOS Pi (ARM64) |
 |---|---|---|
-| เวอร์ชัน | v1.0 | v0.4 |
+| เวอร์ชัน | v1.0 | v0.5 |
 | รันบน | QEMU | Raspberry Pi Zero 2 W ตัวจริง + QEMU |
 | ภาษาของ kernel | Assembly (`kernel.asm`) | C (`arm\`) |
 | Shell | ✅ | ✅ ผ่าน USB serial (COM) และ GPIO serial |
-| Interrupt | ✅ | ✅ เฉพาะ USB |
+| Interrupt | ✅ | ✅ timer + USB |
 | ระบบไฟล์ MyFS | ✅ | ✅ ใน `myfs.img` บน SD card |
-| อัปเดต OS โดยไม่ถอดการ์ด | — | ✅ ผ่าน USB (`arm\update-pi.ps1`) |
-| แยกสิทธิ์ kernel / โปรแกรม | ✅ ring 0 / ring 3 | ⬜ |
-| System call + ตัวโหลดโปรแกรม | ✅ 13 บริการ | ⬜ |
-| ระบบแพ็กเกจ `pkg` | ✅ | ⬜ |
-| โปรแกรมภาษา C | ✅ | ⬜ |
-| Python (MicroPython) | ✅ | ⬜ |
+| อัปเดต OS / ส่งไฟล์โดยไม่ถอดการ์ด | — | ✅ ผ่าน USB (`update-pi.ps1`, `push-pi.ps1`) |
+| แยกสิทธิ์ kernel / โปรแกรม | ✅ ring 0 / ring 3 | ✅ EL1 / EL0 |
+| System call + ตัวโหลดโปรแกรม | ✅ 13 บริการ | ✅ 13 บริการ (เลขเดียวกัน) |
+| ระบบแพ็กเกจ `pkg` | ✅ | ✅ |
+| โปรแกรมภาษา C | ✅ | ✅ (โค้ดชุดเดียวกัน) |
+| Python (MicroPython) | ✅ | ✅ |
+| หน้า panic | ✅ | ✅ |
 
 ## สิ่งที่ยังขาด
 
@@ -33,8 +34,6 @@
 
 **เฉพาะ Pi**
 - แสดงผลออก HDMI และคีย์บอร์ด USB
-- หน้า panic ที่บอกสาเหตุ (ตอนนี้มีแค่ไฟ LED กะพริบรัว)
-
 - SD card ของ Pi 4 (ตัวควบคุม EMMC2 คนละแบบ)
 
 **ความเรียบร้อยของโปรเจกต์**
@@ -82,16 +81,22 @@
 
 ประมาณ 3–4 รอบ จบเฟสนี้ MyOS บน Pi จะทำได้เท่ากับเวอร์ชัน PC
 
-- [ ] **2.1** Exception handler เต็มรูปแบบ: หน้า panic บอกสาเหตุและ register
+- [x] **2.1** Exception handler เต็มรูปแบบ: หน้า panic บอกสาเหตุและ register
   - เสร็จเมื่อ: `crash` แสดงข้อมูลผ่าน USB
-- [ ] **2.2** Timer interrupt + page table ที่แยกพื้นที่โปรแกรม
+  - `arm\vectors.S` ตาราง exception ของ MyOS เอง หลัง panic ขับ USB แบบวนเช็ค (interrupt ปิดอยู่) ข้อความจึงยังส่งออกได้ ทดสอบใน QEMU (บนเครื่องจริงจะทำให้ Pi หยุดจนต้องถอดไฟ)
+- [x] **2.2** Timer interrupt + page table ที่แยกพื้นที่โปรแกรม
   - เสร็จเมื่อ: `uptime` นับจาก interrupt
-- [ ] **2.3** โหมดผู้ใช้ EL0 + system call ผ่าน `svc` (เลขเดิม 13 ตัว)
+  - system timer 100 ครั้งต่อวินาที, โปรแกรมแตะได้เฉพาะ `0x400000–0x5FFFFF` (ที่อยู่เดียวกับ MyOS PC)
+- [x] **2.3** โหมดผู้ใช้ EL0 + system call ผ่าน `svc` (เลขเดิม 13 ตัว)
   - เสร็จเมื่อ: โปรแกรม C รันใน EL0 ได้ และโปรแกรมพังแล้ว OS ไม่ล่ม
-- [ ] **2.4** ตัวโหลดโปรแกรม + `pkg` + ปรับ `csdk\` ให้ build ได้สองสถาปัตยกรรม
+  - ยืนยันบนเครื่องจริง: `crashme` ถูก CPU หยุด (Data Abort) แล้ว shell ทำงานต่อ
+- [x] **2.4** ตัวโหลดโปรแกรม + `pkg` + ปรับ `csdk\` ให้ build ได้สองสถาปัตยกรรม
   - เสร็จเมื่อ: `pkg install calc` บน Pi
-- [ ] **2.5** Build MicroPython สำหรับ ARM
+  - header ของโปรแกรมบอกสถาปัตยกรรม (1 = x86, 2 = ARM) ทั้งสอง kernel ปฏิเสธโปรแกรมของอีกฝั่ง
+  - เพิ่มคำสั่ง `recv` + `arm\push-pi.ps1` ส่งไฟล์เข้า Pi ผ่าน USB
+- [x] **2.5** Build MicroPython สำหรับ ARM
   - เสร็จเมื่อ: `python game.py` บน Pi
+  - ยืนยันบนเครื่องจริง บน ARM ใช้การแปลงเลขทศนิยมแบบ APPROX เพราะ `long double` ของ ARM64 ต้องใช้ไลบรารีที่ไม่มี
 
 ## เฟส 3: ใช้งานสะดวกขึ้น
 

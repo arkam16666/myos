@@ -6,7 +6,8 @@
 // extra modules (sources in extmod/)
 #define MICROPY_PY_RANDOM                 (1)
 #define MICROPY_PY_RANDOM_EXTRA_FUNCS     (1)   // randint, choice, ...
-#define MICROPY_PY_RANDOM_SEED_INIT_FUNC  ({ uint32_t lo, hi; __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi)); lo ^ hi; })
+#define MICROPY_PY_RANDOM_SEED_INIT_FUNC  (myos_random_seed())
+uint32_t myos_random_seed(void);                // hal.c
 #define MICROPY_PY_JSON                   (1)
 #define MICROPY_PY_TIME                   (1)
 #define MICROPY_PY_TIME_GMTIME_LOCALTIME_MKTIME (0)
@@ -30,13 +31,22 @@
 #define MICROPY_FLOAT_IMPL                (MICROPY_FLOAT_IMPL_DOUBLE)  // 7 / 2 = 3.5
 #define MICROPY_PY_MATH                   (1)                          // import math
 #define MICROPY_FLOAT_USE_NATIVE_FLT16    (0)   // no compiler runtime for half floats
+#if defined(__aarch64__)
+// on ARM64 'long double' is 128-bit and needs a compiler runtime we don't
+// have, so use the float<->text conversion that only needs 'double'
+#define MICROPY_FLOAT_FORMAT_IMPL         (MICROPY_FLOAT_FORMAT_IMPL_APPROX)
+#endif
 
 #define MICROPY_PY_SYS_EXIT               (1)                          // import sys; sys.exit()
 
 #define MICROPY_HEAP_SIZE                 (512 * 1024)
 
 #define MICROPY_HW_BOARD_NAME             "MyOS"
+#if defined(__aarch64__)
+#define MICROPY_HW_MCU_NAME               "ARM64 (Raspberry Pi)"
+#else
 #define MICROPY_HW_MCU_NAME               "x86-64"
+#endif
 
 typedef long mp_off_t;
 

@@ -1,6 +1,18 @@
 # MicroPython for MyOS.
-# Built by build.ps1; needs make, python and clang (LLVM) on the PATH.
-#   make            -> build/python (a MyOS program)
+# Built by build.ps1 / arm\build.ps1; needs make, python and clang (LLVM) on the PATH.
+#   make              -> build/python        (MyOS PC, x86-64)
+#   make ARCH=arm64   -> build-arm64/python  (MyOS Pi, ARM64)
+
+ARCH ?= x86_64
+ifeq ($(ARCH),arm64)
+BUILD = build-arm64
+TARGET_ARCH = --target=aarch64-unknown-none-elf -mcpu=cortex-a53
+LDARCH = -Wl,--defsym=MYOS_ARCH=2
+else
+BUILD = build
+TARGET_ARCH = --target=x86_64-unknown-none-elf -mno-red-zone
+LDARCH =
+endif
 
 include ../third_party/micropython/py/mkenv.mk
 
@@ -16,13 +28,12 @@ CPP = clang -E
 LD = clang
 PYTHON = python
 
-TARGET = --target=x86_64-unknown-none-elf -ffreestanding -fno-pic -fno-pie \
-         -mno-red-zone -fno-stack-protector -nostdlib
+TARGET = $(TARGET_ARCH) -ffreestanding -fno-pic -fno-pie -fno-stack-protector -nostdlib
 
 INC += -I. -Iinclude -I../csdk -I$(TOP) -I$(BUILD)
 CFLAGS += $(INC) $(TARGET) -std=gnu99 -Os -DNDEBUG -Wall -Wno-unused-command-line-argument \
           -fdata-sections -ffunction-sections -fomit-frame-pointer
-LDFLAGS = $(TARGET) -fuse-ld=lld -Wl,-T,../csdk/link.ld -Wl,--gc-sections -Wl,--oformat=binary
+LDFLAGS = $(TARGET) -fuse-ld=lld -Wl,-T,../csdk/link.ld $(LDARCH) -Wl,--gc-sections -Wl,--oformat=binary
 
 SRC_C = \
 	main.c \

@@ -70,6 +70,25 @@ foreach ($p in Get-ChildItem ../packages -Filter *.c) {
     python ../tools/mkpkg.py "build/packages/$($p.BaseName)" "../packages/$($p.Name)" "build/packages/$($p.BaseName).pkg"
 }
 $ErrorActionPreference = 'Stop'
+
+# MicroPython for the Pi (python\ built with ARCH=arm64) -> build\packages\python.pkg
+$make = Get-Command make -ErrorAction SilentlyContinue
+$make = if ($make) { $make.Source } else {
+    Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter make.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName }
+if ((Test-Path ../third_party/micropython/py) -and $make) {
+    # make can't handle the non-ASCII folder name, so build through an ASCII junction
+    $junction = "$env:TEMP\myos-src"
+    if (-not (Test-Path $junction)) { New-Item -ItemType Junction -Path $junction -Target (Resolve-Path ..).Path | Out-Null }
+    $savedPath = $env:PATH
+    $env:PATH = "$(Split-Path $clang);$env:ProgramFiles\Git\usr\bin;$env:PATH"
+    Push-Location "$junction\python"
+    $ErrorActionPreference = 'Continue'
+    try { & $make ARCH=arm64 -j8 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '\berror\b' } | ForEach-Object { Write-Host "  $_" } }
+    finally { Pop-Location; $env:PATH = $savedPath; $ErrorActionPreference = 'Stop' }
+    if (-not (Test-Path ../python/build-arm64/python)) { throw "MicroPython (ARM) build failed" }
+    python ../tools/mkpkg.py ../python/build-arm64/python ../python/python.info build/packages/python.pkg
+}
 Write-Host "Built arm\build\kernel8.img ($((Get-Item build/kernel8.img).Length) bytes) and kernel8-qemu.img"
 
 if (-not $NoRun) {

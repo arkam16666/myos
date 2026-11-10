@@ -66,6 +66,14 @@ PROGRAMS += [
     ("pkg info",          "pkg info guess",       ["Installed:   no", "Guess the number"]),
     ("pkg remove",        "pkg remove calc",      ["Removed calc"]),
     ("removed",           "calc",                 ["Unknown command"]),
+    ("install python",    "pkg install python",   ["Done."], 3),
+    ("write a script",    "write t.py print(6 * 7, 7 / 2)", ["Wrote"]),
+    ("python file",       "python t.py",          ["42 3.5"], 4),
+    ("python repl",       "python",               [">>> "], 4),
+    ("python float",      "7 / 2",                ["3.5"]),
+    ("python bigint",     "2 ** 100",             ["1267650600228229401496703205376"]),
+    ("python files",      "import os; sorted(os.listdir())[:2]", ["calc.pkg"]),
+    ("python leaves",     "import sys; sys.exit()", ["myos> "], 2),
 ]
 
 SD_AFTER_REBOOT = [
@@ -232,8 +240,8 @@ def main():
                                                  f"MyFS mounted from myfs.img, {files} file(s)"])]
     sd = [(n, c, [f"{files} file(s)" if e == "2 file(s)" else e for e in x]) for n, c, x in SD]
     failed = run("raspi3b", "raspi3b", image, boot_with_sd + BASIC[1:] + sd + PROGRAMS, sd=card)
-    # after: pi.txt added, hello.py removed, cdemo + crashme installed (calc removed again)
-    after = [(n, c, [e.replace("10 file(s)", f"{files + 2} file(s)") for e in x])
+    # after: pi.txt + t.py added, hello.py removed, cdemo + crashme + python installed
+    after = [(n, c, [e.replace("10 file(s)", f"{files + 4} file(s)") for e in x])
              for n, c, x in SD_AFTER_REBOOT]
     failed += run("raspi3b", "raspi3b", image, after, sd=card)
     failed += check_with_myfs_py(card, lba, sectors)

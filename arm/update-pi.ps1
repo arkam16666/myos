@@ -41,7 +41,10 @@ function Wait-For([string[]]$words, [int]$seconds) {
     $end = (Get-Date).AddSeconds($seconds)
     while ((Get-Date) -lt $end) {
         $text += $sp.ReadExisting()
-        foreach ($w in $words) { if ($text.Contains($w)) { return $text } }
+        foreach ($w in $words) {       # the word and the rest of its line
+            $i = $text.IndexOf($w)
+            if ($i -ge 0 -and $text.IndexOf("`n", $i) -ge 0) { return $text }
+        }
         Start-Sleep -Milliseconds 50
     }
     return $text

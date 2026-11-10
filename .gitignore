@@ -1,6 +1,7 @@
 # build output (recreate with build.ps1 / arm\build.ps1)
 build/
 python/build/
+python/build-arm64/
 arm/build/
 arm/sdcard/myos8.img
 
