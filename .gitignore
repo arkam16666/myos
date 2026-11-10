@@ -1,0 +1,15 @@
+# build output (recreate with build.ps1 / arm\build.ps1)
+build/
+python/build/
+arm/build/
+arm/sdcard/myos8.img
+
+# the hard disk image MyOS writes to (created by build.ps1)
+disk.img
+
+# downloaded sources: MicroPython, TinyUSB, broadcom-peripherals (see README)
+third_party/
+
+# Raspberry Pi firmware downloaded for USB boot (see README)
+arm/usbboot/*
+!arm/usbboot/config.txt
