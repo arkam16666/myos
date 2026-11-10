@@ -31,7 +31,7 @@ $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadco
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
             'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'fat.c', 'myfs.c',
             'user.c', 'pkg.c', 'kernel.c', '../csdk/libc.c')
-$usb    = @('usb.c', 'net.c',
+$usb    = @('usb.c', 'net.c', 'remote.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",
             "$tusb/src/class/cdc/cdc_device.c", "$tusb/src/class/net/ncm_device.c",

@@ -12,10 +12,15 @@ static void usb_service(void) {}
 static void usb_write(char c) { (void)c; }
 static void usb_flush(void) {}
 static int usb_read(void) { return -1; }
+static void remote_putc(char c) { (void)c; }
+static void remote_flush(void) {}
+static int remote_getc(void) { return -1; }
+static const int polled = 0;
 void console_enable_usb(void) {}
 void console_panic_mode(void) {}
 #else
 #include "net.h"
+#include "remote.h"
 #include "tusb.h"
 
 static int usb_on;
@@ -63,6 +68,7 @@ void console_putc(char c) {
     uart_putc(c);                   // uart_putc turns '\n' into "\r\n" itself
     if (c == '\n') usb_write('\r');
     usb_write(c);
+    if (!polled) remote_putc(c);    // the network shell (remote.c) adds its own '\r'
     if (c == '\n') usb_flush();
     at_line_start = (c == '\n');
 }
@@ -70,6 +76,7 @@ void console_putc(char c) {
 void console_puts(const char *s) {
     while (*s) console_putc(*s++);
     usb_flush();
+    if (!polled) remote_flush();
 }
 
 int console_at_line_start(void) {
@@ -82,11 +89,14 @@ void console_service(void) {
 
 void console_poll(void) {
     usb_service();
+    if (!polled) remote_flush();    // e.g. the echo of a typed key
     led_heartbeat(millis());
 }
 
 int console_getc_nowait(void) {
     console_poll();
     if (uart_has_char()) return (unsigned char)uart_getc();
-    return usb_read();
+    int c = usb_read();
+    if (c < 0 && !polled) c = remote_getc();
+    return c;
 }

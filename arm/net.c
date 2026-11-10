@@ -27,6 +27,14 @@ static const ip4_addr_t gateway = INIT_IP4(0, 0, 0, 0);
 static int started;
 static uint32_t packets_in, packets_out;
 
+// lwIP must not be entered twice at once. Sending a frame can run TinyUSB,
+// which can hand us a received frame: while lwIP is busy such frames are
+// left in TinyUSB and picked up again by net_poll().
+static int busy, deferred;
+
+void net_lock(void) { busy++; }
+void net_unlock(void) { busy--; }
+
 static dhcp_entry_t entries[] = {
     { {0}, INIT_IP4(192, 168, 7, 2), 24 * 60 * 60 },
     { {0}, INIT_IP4(192, 168, 7, 3), 24 * 60 * 60 },
@@ -88,10 +96,19 @@ static err_t netif_init_cb(struct netif *netif) {
 // a frame arrived from the PC
 bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
     if (size && started) {
+        if (busy) {                             // inside lwIP: later
+            deferred = 1;
+            return false;
+        }
         struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
-        if (p == NULL) return false;            // try again later
+        if (p == NULL) {                        // out of buffers: later
+            deferred = 1;
+            return false;
+        }
         pbuf_take(p, src, size);
+        busy++;
         if (netif_data.input(p, &netif_data) != ERR_OK) pbuf_free(p);
+        busy--;
         packets_in++;
     }
     tud_network_recv_renew();
@@ -130,7 +147,14 @@ void net_init(void) {
 }
 
 void net_poll(void) {
-    if (started) sys_check_timeouts();
+    if (!started || busy) return;
+    busy++;
+    sys_check_timeouts();
+    busy--;
+    if (deferred) {                             // frames left waiting in TinyUSB
+        deferred = 0;
+        tud_network_recv_renew();
+    }
 }
 
 int net_link_up(void) {

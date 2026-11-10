@@ -20,6 +20,7 @@
 #include "user.h"
 #ifndef NO_USB
 #include "net.h"
+#include "remote.h"
 #include "usb.h"
 #endif
 
@@ -104,7 +105,8 @@ static void read_line(char *buf, int size) {
     for (;;) {
         int c = console_getc_nowait();
 #ifndef NO_USB
-        if (usb_take_connect_event()) {     // a terminal just opened the USB port
+        if (usb_take_connect_event() |      // a terminal just opened the USB port
+            remote_take_connect_event()) {  // or connected over the network
             console_puts("\n");
             console_puts(banner);
             console_puts(prompt);
@@ -422,7 +424,14 @@ static void cmd_net(void) {
     print_dec(net_packets_in());
     console_puts(" in, ");
     print_dec(net_packets_out());
-    console_puts(" out\nTry on the PC:  ping 192.168.7.1\n");
+    console_puts(" out\nShell:    telnet 192.168.7.1 (port 23) - ");
+    if (remote_client(pc)) {
+        console_puts("connected from ");
+        console_puts(pc);
+    } else {
+        console_puts("nobody connected");
+    }
+    console_puts("\nTry on the PC:  ping 192.168.7.1\n");
 #endif
 }
 
@@ -568,6 +577,7 @@ int main(void) {
     usb_init();
     console_enable_usb();
     net_init();
+    remote_init();
 #endif
     BP_EnableIRQs();
     storage_init();

@@ -5,6 +5,8 @@
 
 void net_init(void);
 void net_poll(void);            // lwIP timers; call often
+void net_lock(void);            // around calls into lwIP from outside net.c
+void net_unlock(void);
 int net_link_up(void);
 uint32_t net_packets_in(void);
 uint32_t net_packets_out(void);
