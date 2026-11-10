@@ -21,6 +21,7 @@
 #ifndef NO_USB
 #include "net.h"
 #include "remote.h"
+#include "ssh.h"
 #include "usb.h"
 #endif
 
@@ -106,7 +107,8 @@ static void read_line(char *buf, int size) {
         int c = console_getc_nowait();
 #ifndef NO_USB
         if (usb_take_connect_event() |      // a terminal just opened the USB port
-            remote_take_connect_event()) {  // or connected over the network
+            remote_take_connect_event() |   // or connected over the network
+            ssh_take_connect_event()) {
             console_puts("\n");
             console_puts(banner);
             console_puts(prompt);
@@ -197,6 +199,8 @@ static void cmd_help(void) {
                  "  format    erase myfs.img, create an empty file system\n"
                  "  pkg       packages: pkg list | info N | install N | remove N\n"
                  "  net       USB network status (the Pi is 192.168.7.1)\n"
+                 "  passwd    set the SSH password\n"
+                 "  exit      leave an SSH or telnet session\n"
                  "  crash     test the panic screen ('crash pf' = page fault)\n"
                  "  update    receive a new MyOS from the PC (arm\\update-pi.ps1)\n"
                  "  recv F    receive file F from the PC (arm\\push-pi.ps1)\n"
@@ -431,8 +435,66 @@ static void cmd_net(void) {
     } else {
         console_puts("nobody connected");
     }
+    console_puts("\nSSH:      ssh myos@192.168.7.1 - ");
+    if (ssh_client(pc)) {
+        console_puts("logged in: ");
+        console_puts(pc);
+    } else {
+        console_puts(ssh_password_set() ? "nobody logged in" : "no password yet: type 'passwd'");
+    }
+    char fp[52];
+    if (ssh_fingerprint(fp)) {
+        console_puts("\nHost key: ED25519 ");
+        console_puts(fp);
+        if (!ssh_host_key_saved()) console_puts(" (not saved: no MyFS)");
+    }
     console_puts("\nTry on the PC:  ping 192.168.7.1\n");
 #endif
+}
+
+// read a line without showing it (for passwords)
+static void read_secret(char *buf, int size) {
+    int len = 0;
+    for (;;) {
+        int c = console_getc_nowait();
+        if (c < 0) continue;
+        if (c == '\r' || c == '\n') break;
+        if ((c == 8 || c == 127) && len > 0) len--;
+        else if (c >= ' ' && c <= '~' && len < size - 1) buf[len++] = (char)c;
+    }
+    buf[len] = 0;
+    console_putc('\n');
+}
+
+static void cmd_passwd(void) {
+#ifdef NO_USB
+    console_puts("No SSH in this build.\n");
+#else
+    if (!need_fs()) return;
+    char a[64], b[64];
+    console_puts("New SSH password (not shown): ");
+    read_secret(a, sizeof a);
+    if (strlen(a) < 6) {
+        console_puts("Too short: use at least 6 characters.\n");
+        memset(a, 0, sizeof a);
+        return;
+    }
+    console_puts("Type it again: ");
+    read_secret(b, sizeof b);
+    if (strcmp(a, b) != 0) console_puts("They don't match. Nothing changed.\n");
+    else if (ssh_set_password(a) != 0) console_puts("Couldn't save it to MyFS.\n");
+    else console_puts("Saved. Log in from the PC with:  ssh myos@192.168.7.1\n");
+    memset(a, 0, sizeof a);
+    memset(b, 0, sizeof b);
+#endif
+}
+
+static void cmd_exit(void) {
+#ifndef NO_USB
+    if (console_last_source() == CONSOLE_SSH) { ssh_logout(); return; }
+    if (console_last_source() == CONSOLE_TELNET) { remote_logout(); return; }
+#endif
+    console_puts("'exit' ends an SSH or telnet session; there's nothing to leave here.\n");
 }
 
 static void cmd_crash(const char *arg) {
@@ -581,6 +643,9 @@ int main(void) {
 #endif
     BP_EnableIRQs();
     storage_init();
+#ifndef NO_USB
+    ssh_init();                     // the host key is kept in MyFS
+#endif
     console_puts("\n");
     console_puts(banner);
     print_storage_status();
@@ -621,6 +686,10 @@ int main(void) {
             pkg_command(arg);
         } else if (command(line, "net")) {
             cmd_net();
+        } else if (command(line, "passwd")) {
+            cmd_passwd();
+        } else if (command(line, "exit") || command(line, "logout")) {
+            cmd_exit();
         } else if ((arg = command(line, "crash"))) {
             cmd_crash(arg);
         } else if (command(line, "update")) {

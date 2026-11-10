@@ -77,7 +77,14 @@ static void drop_client(void) {
     tcp_arg(pcb, NULL);
     tcp_recv(pcb, NULL);
     tcp_err(pcb, NULL);
+    net_lock();
     if (tcp_close(pcb) != ERR_OK) tcp_abort(pcb);
+    net_unlock();
+}
+
+void remote_logout(void) {
+    remote_flush();
+    drop_client();
 }
 
 static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {

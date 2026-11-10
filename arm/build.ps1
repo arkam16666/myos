@@ -31,7 +31,7 @@ $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadco
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
             'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'fat.c', 'myfs.c',
             'user.c', 'pkg.c', 'kernel.c', '../csdk/libc.c')
-$usb    = @('usb.c', 'net.c', 'remote.c',
+$usb    = @('usb.c', 'net.c', 'remote.c', 'ssh.c', 'sha256.c', 'rng.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",
             "$tusb/src/class/cdc/cdc_device.c", "$tusb/src/class/net/ncm_device.c",
@@ -44,7 +44,11 @@ $usb += @('init.c', 'def.c', 'inet_chksum.c', 'ip.c', 'mem.c', 'memp.c', 'netif.
           'tcp.c', 'tcp_in.c', 'tcp_out.c', 'timeouts.c', 'udp.c') | ForEach-Object { "$lwip/core/$_" }
 $usb += @('etharp.c', 'icmp.c', 'ip4.c', 'ip4_addr.c', 'ip4_frag.c') | ForEach-Object { "$lwip/core/ipv4/$_" }
 $usb += "$lwip/netif/ethernet.c"
-$usbflags = @("-I$lwip/include", "-I$tusb/lib/networking")
+# Monocypher: the cryptography for SSH
+$mono = "../third_party/monocypher/src"
+if (-not (Test-Path $mono)) { throw "Monocypher missing (run tools/get-deps.ps1)" }
+$usb += @("$mono/monocypher.c", "$mono/optional/monocypher-ed25519.c")
+$usbflags = @("-I$lwip/include", "-I$tusb/lib/networking", "-I$mono", "-I$mono/optional")
 
 New-Item -ItemType Directory -Force build | Out-Null
 $ErrorActionPreference = 'Continue'     # compiler warnings on stderr are not errors

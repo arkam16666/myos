@@ -12,7 +12,9 @@ $deps = @(
     @{ Path = 'third_party/tinyusb/hw/mcu/broadcom'; Url = 'https://github.com/adafruit/broadcom-peripherals.git'
        Commit = '08370086080759ed54ac1136d62d2ad24c6fa267' },   # Raspberry Pi boot/MMU/IRQ code
     @{ Path = 'third_party/tinyusb/lib/lwip'; Url = 'https://github.com/lwip-tcpip/lwip.git'
-       Commit = '159e31b689577dbf69cf0683bbaffbd71fa5ee10' }    # TCP/IP for the USB network
+       Commit = '159e31b689577dbf69cf0683bbaffbd71fa5ee10' },   # TCP/IP for the USB network
+    @{ Path = 'third_party/monocypher'; Url = 'https://github.com/LoupVaillant/Monocypher.git'
+       Commit = '0d85f98c9d9b0227e42cf795cb527dff372b40a4' }    # cryptography for SSH (4.0.2)
 )
 
 foreach ($d in $deps) {

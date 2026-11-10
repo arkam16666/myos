@@ -10,5 +10,7 @@ void console_service(void);         // keep USB going (no LED)
 int console_getc_nowait(void);      // a key, or -1 if none is waiting
 void console_enable_usb(void);
 void console_panic_mode(void);      // interrupts are off: poll the USB controller
+enum { CONSOLE_LOCAL, CONSOLE_TELNET, CONSOLE_SSH };
+int console_last_source(void);      // where the last key came from
 
 #endif

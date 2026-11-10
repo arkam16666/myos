@@ -6,6 +6,11 @@
 #include "uart.h"
 
 static int at_line_start = 1;
+static int last_source;
+
+int console_last_source(void) {
+    return last_source;
+}
 
 #ifdef NO_USB
 static void usb_service(void) {}
@@ -15,12 +20,17 @@ static int usb_read(void) { return -1; }
 static void remote_putc(char c) { (void)c; }
 static void remote_flush(void) {}
 static int remote_getc(void) { return -1; }
+static void ssh_putc(char c) { (void)c; }
+static void ssh_flush(void) {}
+static void ssh_poll(void) {}
+static int ssh_getc(void) { return -1; }
 static const int polled = 0;
 void console_enable_usb(void) {}
 void console_panic_mode(void) {}
 #else
 #include "net.h"
 #include "remote.h"
+#include "ssh.h"
 #include "tusb.h"
 
 static int usb_on;
@@ -68,7 +78,10 @@ void console_putc(char c) {
     uart_putc(c);                   // uart_putc turns '\n' into "\r\n" itself
     if (c == '\n') usb_write('\r');
     usb_write(c);
-    if (!polled) remote_putc(c);    // the network shell (remote.c) adds its own '\r'
+    if (!polled) {                  // the network shells add their own CR
+        remote_putc(c);
+        ssh_putc(c);
+    }
     if (c == '\n') usb_flush();
     at_line_start = (c == '\n');
 }
@@ -76,7 +89,10 @@ void console_putc(char c) {
 void console_puts(const char *s) {
     while (*s) console_putc(*s++);
     usb_flush();
-    if (!polled) remote_flush();
+    if (!polled) {
+        remote_flush();
+        ssh_flush();
+    }
 }
 
 int console_at_line_start(void) {
@@ -89,14 +105,24 @@ void console_service(void) {
 
 void console_poll(void) {
     usb_service();
-    if (!polled) remote_flush();    // e.g. the echo of a typed key
+    if (!polled) {
+        ssh_poll();
+        remote_flush();             // e.g. the echo of a typed key
+        ssh_flush();
+    }
     led_heartbeat(millis());
 }
 
 int console_getc_nowait(void) {
     console_poll();
+    last_source = CONSOLE_LOCAL;
     if (uart_has_char()) return (unsigned char)uart_getc();
     int c = usb_read();
-    if (c < 0 && !polled) c = remote_getc();
+    if (c >= 0 || polled) return c;
+    if ((c = remote_getc()) >= 0) {
+        last_source = CONSOLE_TELNET;
+        return c;
+    }
+    if ((c = ssh_getc()) >= 0) last_source = CONSOLE_SSH;
     return c;
 }
