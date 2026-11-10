@@ -2,6 +2,7 @@
 """MyFS disk tool - look inside the MyOS hard disk from Windows.
 
 usage:
+  python tools/myfs.py myfs.img create [MB]         new empty image (default 16 MB)
   python tools/myfs.py disk.img ls
   python tools/myfs.py disk.img put <file> [name]   copy a Windows file onto the disk
   python tools/myfs.py disk.img putnew <files...>   copy only files not on the disk yet
@@ -112,6 +113,13 @@ def cmd_put(disk, path, name=None):
     print(f"put {path} -> {name} ({len(data)} bytes)")
 
 
+def create(path, megabytes):
+    """make a new, empty MyFS image file (for the Pi: copy it to the SD card's bootfs)"""
+    with open(path, "wb") as f:
+        f.truncate(int(megabytes) * 1024 * 1024)
+    cmd_format(Disk(path))
+
+
 def cmd_putnew(disk, *paths):
     """put each file whose name is not on the disk yet (never overwrites)"""
     _, entries = load(disk)
@@ -144,6 +152,9 @@ def cmd_rm(disk, name):
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
+    if sys.argv[2] == "create":
+        create(sys.argv[1], sys.argv[3] if len(sys.argv) > 3 else 16)
+        return
     disk = Disk(sys.argv[1])
     cmd, args = sys.argv[2], sys.argv[3:]
     commands = {"format": cmd_format, "ls": cmd_ls, "put": cmd_put, "putnew": cmd_putnew,

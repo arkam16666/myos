@@ -28,8 +28,9 @@ $flags = @('--target=aarch64-unknown-none-elf', '-mcpu=cortex-a53', '-ffreestand
 if ($Pi4) { $flags += '-DPI4' }
 
 $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadcom/gen/interrupt_handlers.c",
-            'uart.c', 'led.c', 'console.c', 'kernel.c', '../csdk/libc.c')
-$usb    = @("$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c", 'usb.c',
+            "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
+            'uart.c', 'led.c', 'console.c', 'sd.c', 'fat.c', 'myfs.c', 'kernel.c', '../csdk/libc.c')
+$usb    = @('usb.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",
             "$tusb/src/class/cdc/cdc_device.c",
