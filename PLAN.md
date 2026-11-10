@@ -44,7 +44,7 @@
 
 ประมาณ 1 รอบ
 
-- [ ] **0.1** `git init` + `.gitignore` (ไม่เก็บ `build\`, `disk.img`, `third_party\`) + commit แรก
+- [x] **0.1** `git init` + `.gitignore` (ไม่เก็บ `build\`, `disk.img`, `third_party\`) + commit แรก
   - เสร็จเมื่อ: ย้อนเวอร์ชันได้
 - [x] **0.2** README: วิธีติดตั้งเครื่องมือ, build, รัน, โครงสร้างโฟลเดอร์
   - เสร็จเมื่อ: คนอื่นอ่านแล้ว build ตามได้
