@@ -19,4 +19,8 @@ static inline uint64_t millis(void) {
     return timer_count() / (timer_freq() / 1000);
 }
 
+// 100 per second, counted by the system timer interrupt (kernel.c)
+extern volatile uint64_t ticks;
+#define TICKS_PER_SECOND 100
+
 #endif

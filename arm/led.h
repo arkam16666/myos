@@ -6,5 +6,6 @@
 void led_init(void);
 void led_heartbeat(uint64_t ms);    // call often with the time in milliseconds
 void led_panic(void) __attribute__((noreturn));   // fast blink forever
+void led_panic_step(uint64_t ms);                   // one step of the fast blink
 
 #endif

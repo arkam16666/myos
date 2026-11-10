@@ -29,7 +29,8 @@ if ($Pi4) { $flags += '-DPI4' }
 
 $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadcom/gen/interrupt_handlers.c",
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
-            'uart.c', 'led.c', 'console.c', 'sd.c', 'fat.c', 'myfs.c', 'kernel.c', '../csdk/libc.c')
+            'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'fat.c', 'myfs.c',
+            'user.c', 'pkg.c', 'kernel.c', '../csdk/libc.c')
 $usb    = @('usb.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",
@@ -54,6 +55,21 @@ if ($kernel.Length -gt 1MB) { throw "kernel8.img is bigger than 1 MB" }
 $padded = New-Object byte[] 1MB
 [Array]::Copy($kernel, $padded, $kernel.Length)
 [IO.File]::WriteAllBytes("$PSScriptRoot\build\myos8.img", $padded)
+
+# packages for the Pi: the same packages\*.c as MyOS PC, built for ARM64
+# -> build\packages\NAME.pkg (send them to the Pi with push-pi.ps1)
+New-Item -ItemType Directory -Force build/packages | Out-Null
+$appflags = @('--target=aarch64-unknown-none-elf', '-mcpu=cortex-a53', '-ffreestanding', '-nostdlib',
+              '-fno-pic', '-fno-pie', '-O2', '-I../csdk',
+              '-fuse-ld=lld', '-Wl,-T,../csdk/link.ld', '-Wl,--defsym=MYOS_ARCH=2', '-Wl,--oformat=binary')
+$ErrorActionPreference = 'Continue'
+foreach ($p in Get-ChildItem ../packages -Filter *.c) {
+    & $clang @appflags ../csdk/crt0.c ../csdk/libc.c "../packages/$($p.Name)" -o "build/packages/$($p.BaseName)" 2>&1 |
+        ForEach-Object { "$_" } | Where-Object { $_ -match 'error' } | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE) { $ErrorActionPreference = 'Stop'; throw "$($p.Name) failed for ARM" }
+    python ../tools/mkpkg.py "build/packages/$($p.BaseName)" "../packages/$($p.Name)" "build/packages/$($p.BaseName).pkg"
+}
+$ErrorActionPreference = 'Stop'
 Write-Host "Built arm\build\kernel8.img ($((Get-Item build/kernel8.img).Length) bytes) and kernel8-qemu.img"
 
 if (-not $NoRun) {

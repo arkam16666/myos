@@ -1263,6 +1263,8 @@ pkg_install:
     ja bad_pkg
     cmp dword [PKG_BUF + PKG_HDR_SIZE], 'MYEX'
     jne bad_pkg
+    cmp dword [PKG_BUF + PKG_HDR_SIZE + 4], 1   ; architecture 1 = x86-64 (2 = Pi)
+    jne bad_pkg
     mov byte [PKG_BUF + P_NAME + 15], 0
     mov byte [PKG_BUF + P_VERSION + 15], 0
     mov rsi, PKG_BUF + P_NAME
@@ -1885,6 +1887,8 @@ run_program:
     add rdi, 512
     loop .load
     cmp dword [USER_BASE], 'MYEX'   ; header check
+    jne .not_program
+    cmp dword [USER_BASE + 4], 1    ; architecture 1 = x86-64 (2 = Raspberry Pi)
     jne .not_program
     mov r15, [USER_BASE + 8]    ; entry point must be inside the file
     cmp r15, USER_BASE + 16

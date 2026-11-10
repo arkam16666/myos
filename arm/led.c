@@ -49,9 +49,13 @@ static uint64_t now_ms(void) {
     return count / (freq / 1000);
 }
 
-// something went badly wrong: blink fast forever (5 times a second)
+// something went badly wrong: blink fast (5 times a second)
+void led_panic_step(uint64_t ms) {
+    led_set((ms / 100) % 2);
+}
+
 void led_panic(void) {
     for (;;) {
-        led_set((now_ms() / 100) % 2);
+        led_panic_step(now_ms());
     }
 }

@@ -45,9 +45,37 @@ SD = [
     ("rm gone",         "cat hello.py",           ["No such file: hello.py"]),
 ]
 
+PROGRAMS = [
+    ("pkg list",          "pkg list",             ["calc", "available", "DESCRIPTION"]),
+    ("pkg install",       "pkg install calc",     ["Installing calc 1.1", "Done."]),
+    ("program in EL0",    "calc",                 ["calc>"]),
+    ("readline syscall",  "12 + 34",              ["= 46"]),
+    ("program exits",     "",                     ["myos> "]),
+    ("floating point",    "pkg install cdemo",    ["Done."]),
+    ("cdemo",             "cdemo hi there",       ["fib(25) = 75025", "circle area x 100 = 1963",
+                                                   "args: hi there"]),
+    ("crash in EL0",      "pkg install crashme",  ["Done."]),
+    ("crashme",           "crashme",              ["Program crashed: Data Abort",
+                                                   "address 0x0000000000001000"], 2.5),
+    ("kernel survives",   "uptime",               ["Uptime:", "Timer interrupts so far"]),
+    ("file syscalls",     "fortune",              ["Program crashed"], 0.1),   # placeholder, replaced below
+]
+# fortune is a plain program; make sure it is not installed yet, then install + run it
+PROGRAMS[-1] = ("not installed",  "fortune",      ["Unknown command"])
+PROGRAMS += [
+    ("pkg info",          "pkg info guess",       ["Installed:   no", "Guess the number"]),
+    ("pkg remove",        "pkg remove calc",      ["Removed calc"]),
+    ("removed",           "calc",                 ["Unknown command"]),
+]
+
 SD_AFTER_REBOOT = [
-    ("files survive",   None,                     ["MyFS mounted from myfs.img, 2 file(s)"]),
+    ("files survive",   None,                     ["MyFS mounted from myfs.img, 10 file(s)"]),
     ("still there",     "cat pi.txt",             ["made on a pi"]),
+]
+
+PANIC = [
+    ("boot",            None,                     ["myos> "]),
+    ("kernel panic",    "crash",                  ["KERNEL PANIC", "Undefined Instruction", "x30"]),
 ]
 
 
@@ -78,15 +106,17 @@ def run(label, machine, image, tests, sd=None):
 
     failed = 0
     try:
-        for name, command, expect in tests:
+        for test in tests:
+            name, command, expect = test[:3]
+            wait = test[3] if len(test) > 3 else 1
             if command is None:
-                out = read_for(2.5)
+                out = read_for(5)               # boot: about 3 s in QEMU with an SD card
             else:
                 for ch in command:
                     s.sendall(ch.encode())
                     time.sleep(0.01)
                 s.sendall(b"\r")
-                out = read_for(1)
+                out = read_for(wait)
             missing = [e for e in expect if e not in out]
             if missing:
                 failed += 1
@@ -191,16 +221,24 @@ def main():
     tmp = tempfile.mkdtemp(prefix="myos-armtest-")
     card = os.path.join(tmp, "sd.img")
     image = "arm/build/kernel8-qemu.img"
+    pkgs = sorted(os.path.join(ROOT, "arm", "build", "packages", f)
+                  for f in os.listdir(os.path.join(ROOT, "arm", "build", "packages")) if f.endswith(".pkg"))
     layout = mksdimg.build(card, [os.path.join(ROOT, "files", "readme.txt"),
-                                  os.path.join(ROOT, "files", "hello.py")],
+                                  os.path.join(ROOT, "files", "hello.py")] + pkgs,
                            kernel=os.path.join(ROOT, image))
     lba, sectors = layout["myfs"]
+    files = 2 + len(pkgs)
     boot_with_sd = [("boot banner + disk", None, ["for Raspberry Pi (ARM64)",
-                                                 "MyFS mounted from myfs.img, 2 file(s)"])]
-    failed = run("raspi3b", "raspi3b", image, boot_with_sd + BASIC[1:] + SD, sd=card)
-    failed += run("raspi3b", "raspi3b", image, SD_AFTER_REBOOT, sd=card)
+                                                 f"MyFS mounted from myfs.img, {files} file(s)"])]
+    sd = [(n, c, [f"{files} file(s)" if e == "2 file(s)" else e for e in x]) for n, c, x in SD]
+    failed = run("raspi3b", "raspi3b", image, boot_with_sd + BASIC[1:] + sd + PROGRAMS, sd=card)
+    # after: pi.txt added, hello.py removed, cdemo + crashme installed (calc removed again)
+    after = [(n, c, [e.replace("10 file(s)", f"{files + 2} file(s)") for e in x])
+             for n, c, x in SD_AFTER_REBOOT]
+    failed += run("raspi3b", "raspi3b", image, after, sd=card)
     failed += check_with_myfs_py(card, lba, sectors)
     failed += update_test("raspi3b", image, card, layout["kernel"])
+    failed += run("raspi3b", "raspi3b", image, PANIC, sd=card)
 
     # Pi 4 build: no SD support yet, CPU is a Cortex-A72
     pi4 = [(n, c, ["Cortex-A72" if e == "Cortex-A53" else e for e in x]) for n, c, x in BASIC]

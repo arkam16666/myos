@@ -2,6 +2,8 @@
  * Plain C with no system calls: used by x86 programs and by MyOS-ARM. */
 #include <stddef.h>
 
+size_t strlen(const char *s);
+
 void *memcpy(void *dst, const void *src, size_t n) {
     unsigned char *d = dst;
     const unsigned char *s = src;
@@ -48,6 +50,18 @@ int strncmp(const char *a, const char *b, size_t n) {
         if (*a != *b || *a == 0) return (unsigned char)*a - (unsigned char)*b;
     }
     return 0;
+}
+
+char *strcpy(char *dst, const char *src) {
+    char *d = dst;
+    while ((*d++ = *src++)) {
+    }
+    return dst;
+}
+
+char *strcat(char *dst, const char *src) {
+    strcpy(dst + strlen(dst), src);
+    return dst;
 }
 
 size_t strlen(const char *s) {

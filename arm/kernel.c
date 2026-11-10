@@ -1,20 +1,49 @@
 // kernel.c - MyOS for Raspberry Pi (ARM64)
 // Boots (boot8.s drops from EL2 to EL1), turns on the MMU and caches,
-// starts USB and the SD card, and runs a shell over serial and USB.
+// installs its exception vectors, starts the timer, USB and the SD card,
+// and runs a shell over serial and USB. Programs run in EL0 (user.c).
 #include <stdint.h>
 #include <string.h>
 #include "broadcom/caches.h"
+#include "broadcom/defines.h"
+#include "broadcom/interrupts.h"
 #include "broadcom/mmu.h"
 #include "console.h"
 #include "fat.h"
 #include "led.h"
 #include "myfs.h"
+#include "pkg.h"
+#include "print.h"
 #include "sd.h"
 #include "timer.h"
 #include "uart.h"
+#include "user.h"
 #ifndef NO_USB
 #include "usb.h"
 #endif
+
+#ifdef PI4
+#define PM_BASE 0xFE100000UL
+#else
+#define PM_BASE 0x3F100000UL
+#endif
+
+// ---------------------------------------------------------------
+//  timer interrupt: 100 ticks per second from the system timer
+// ---------------------------------------------------------------
+volatile uint64_t ticks;
+
+void TIMER_1_IRQHandler(void) {
+    SYSTMR->CS = 1u << 1;                   // acknowledge compare channel 1
+    SYSTMR->C1 = SYSTMR->CLO + 1000000 / TICKS_PER_SECOND;
+    ticks++;
+}
+
+static void timer_init(void) {
+    SYSTMR->C1 = SYSTMR->CLO + 1000000 / TICKS_PER_SECOND;   // the timer counts at 1 MHz
+    SYSTMR->CS = 1u << 1;
+    BP_EnableIRQ(TIMER_1_IRQn);
+}
 
 // ---------------------------------------------------------------
 //  CPU information (ARM "system registers", read with mrs)
@@ -31,45 +60,13 @@ static uint64_t cpu_id(void) {
     return v;
 }
 
-// a crash (bad memory access, unknown instruction...) lands here
-void HardFault_IRQHandler(void) {
-    led_panic();
-}
-
 // ---------------------------------------------------------------
 //  small helpers
 // ---------------------------------------------------------------
-static void print_dec(uint64_t n) {
-    char buf[21];
-    int i = 20;
-    buf[i] = 0;
-    do {
-        buf[--i] = (char)('0' + n % 10);
-        n /= 10;
-    } while (n);
-    console_puts(&buf[i]);
-}
-
-static void print_hex(uint64_t n, int digits) {
-    for (int shift = (digits - 1) * 4; shift >= 0; shift -= 4) {
-        console_putc("0123456789ABCDEF"[(n >> shift) & 0xF]);
-    }
-}
-
-static void print_signed(int n) {
-    if (n < 0) {
-        console_putc('-');
-        n = -n;
-    }
-    print_dec((uint64_t)n);
-}
-
 // does line start with word (followed by a space or the end)? -> rest of line
 static const char *command(const char *line, const char *word) {
     while (*word) {
-        if (*line++ != *word++) {
-            return 0;
-        }
+        if (*line++ != *word++) return 0;
     }
     if (*line == ' ') {
         while (*line == ' ') line++;
@@ -96,7 +93,7 @@ static const char banner[] =
     " | |\\/| | | | | | | \\___ \\ \n"
     " | |  | | |_| | |_| |___) |\n"
     " |_|  |_|\\__, |\\___/|____/ \n"
-    "         |___/   for Raspberry Pi (ARM64) v0.4\n\n"
+    "         |___/   for Raspberry Pi (ARM64) v0.5\n\n"
     "Type 'help' to see commands.\n\n";
 
 static const char prompt[] = "myos> ";
@@ -114,9 +111,7 @@ static void read_line(char *buf, int size) {
             console_puts(buf);
         }
 #endif
-        if (c < 0) {
-            continue;
-        }
+        if (c < 0) continue;
         if (c == '\r' || c == '\n') {
             console_putc('\n');
             buf[len] = 0;
@@ -197,8 +192,12 @@ static void cmd_help(void) {
                  "  write F X write text X into file F\n"
                  "  rm F      delete file F\n"
                  "  format    erase myfs.img, create an empty file system\n"
+                 "  pkg       packages: pkg list | info N | install N | remove N\n"
+                 "  crash     test the panic screen ('crash pf' = page fault)\n"
                  "  update    receive a new MyOS from the PC (arm\\update-pi.ps1)\n"
-                 "  reboot    restart the Pi\n");
+                 "  recv F    receive file F from the PC (arm\\push-pi.ps1)\n"
+                 "  reboot    restart the Pi\n"
+                 "Programs run by typing their name. More in 'pkg list'.\n");
 }
 
 static void cmd_info(void) {
@@ -223,14 +222,16 @@ static void cmd_info(void) {
 }
 
 static void cmd_uptime(void) {
-    uint64_t seconds = timer_count() / timer_freq();
+    uint64_t seconds = ticks / TICKS_PER_SECOND;
     console_puts("Uptime: ");
     print_dec(seconds / 3600);
     console_puts("h ");
     print_dec(seconds / 60 % 60);
     console_puts("m ");
     print_dec(seconds % 60);
-    console_puts("s\n");
+    console_puts("s\nTimer interrupts so far: ");
+    print_dec(ticks);
+    console_puts(" (100 per second)\n");
 }
 
 static void cmd_sd(void) {
@@ -270,6 +271,7 @@ static void cmd_sd(void) {
 }
 
 static uint8_t sector_buf[512] __attribute__((aligned(4)));
+static uint8_t verify_buf[512] __attribute__((aligned(4)));
 
 static void cmd_hexdump(const char *arg) {
     uint32_t n = 0;
@@ -331,7 +333,6 @@ static void cmd_cat(const char *arg) {
         return;
     }
     char chunk[128];
-    char last = '\n';
     for (uint32_t off = 0; off < (uint32_t)size; off += sizeof chunk) {
         int n = myfs_read(name, off, chunk, sizeof chunk);
         if (n <= 0) break;
@@ -341,10 +342,10 @@ static void cmd_cat(const char *arg) {
             if (c == '\t') c = ' ';
             if (c != '\n' && (c < ' ' || c > '~')) c = '.';
             console_putc(c);
-            last = c;
         }
     }
-    if (last != '\n') console_putc('\n');
+    if (!console_at_line_start()) console_putc('\n');
+    console_puts("");
 }
 
 static void cmd_write(const char *arg) {
@@ -381,15 +382,9 @@ static void cmd_rm(const char *arg) {
         console_puts("Usage: rm <file>\n");
         return;
     }
-    if (myfs_remove(name) == 0) {
-        console_puts("Removed ");
-        console_puts(name);
-        console_putc('\n');
-    } else {
-        console_puts("No such file: ");
-        console_puts(name);
-        console_putc('\n');
-    }
+    console_puts(myfs_remove(name) == 0 ? "Removed " : "No such file: ");
+    console_puts(name);
+    console_putc('\n');
 }
 
 static void cmd_format(const char *arg) {
@@ -410,17 +405,27 @@ static void cmd_format(const char *arg) {
     console_puts(" KB free\n");
 }
 
+static void cmd_crash(const char *arg) {
+    if (arg[0] == 'p') {
+        *(volatile uint64_t *)0x100000000000ULL = 1;     // not mapped: data abort
+    }
+    __asm__ volatile ("udf #0");                        // undefined instruction
+}
+
 // ---------------------------------------------------------------
-//  reboot and update over USB / serial
+//  receiving data from the PC: 'update' (new MyOS) and 'recv' (a file)
+//  MyOS: "<WORD> READY <capacity>"   PC: "MYUP", u32 size, u32 crc32, data
+//  MyOS: "<WORD> OK ..." or "<WORD> FAILED <reason>"
 // ---------------------------------------------------------------
 #ifdef PI4
-#define PM_BASE 0xFE100000UL
+#define PM_RSTC (*(volatile uint32_t *)(0xFE100000UL + 0x1C))
+#define PM_WDOG (*(volatile uint32_t *)(0xFE100000UL + 0x24))
 #else
-#define PM_BASE 0x3F100000UL
+#define PM_RSTC (*(volatile uint32_t *)(0x3F100000UL + 0x1C))
+#define PM_WDOG (*(volatile uint32_t *)(0x3F100000UL + 0x24))
 #endif
-#define PM_RSTC (*(volatile uint32_t *)(PM_BASE + 0x1C))
-#define PM_WDOG (*(volatile uint32_t *)(PM_BASE + 0x24))
 #define PM_PASSWORD 0x5A000000u
+#define RECEIVE_BUF ((uint8_t *)0x01000000)     // 16 MB: free RAM to receive into
 
 static void cmd_reboot(void) {
     console_puts("Rebooting...\n");
@@ -431,8 +436,6 @@ static void cmd_reboot(void) {
     for (;;) {
     }
 }
-
-#define UPDATE_BUF ((uint8_t *)0x01000000)  // 16 MB: free RAM to receive into
 
 static uint32_t crc32(const uint8_t *p, uint32_t n) {
     uint32_t crc = 0xFFFFFFFF;
@@ -452,72 +455,99 @@ static int read_byte(uint64_t timeout_ms) {
     return -1;
 }
 
-static uint8_t verify_buf[512] __attribute__((aligned(4)));
-
-// receive a new kernel and write it over myos8.img on the SD card.
-// Protocol (tools: arm\update-pi.ps1):
-//   MyOS: "UPDATE READY <capacity>"   PC: "MYUP", u32 size, u32 crc32, data
-//   MyOS: "UPDATE OK ..." or "UPDATE FAILED <reason>"
-static void cmd_update(void) {
-    fat_file_t k;
-    const char *why = 0;
-    if (sd_status || fat_find_contiguous("MYOS8   IMG", &k)) {
-        console_puts("UPDATE FAILED no usable myos8.img on the SD card\n");
-        return;
-    }
-    uint32_t capacity = k.sectors * 512;
-    console_puts("UPDATE READY ");
-    print_dec(capacity);
-    console_puts("\n");
-
-    uint8_t hdr[12];
-    for (int i = 0; i < 12; i++) {
-        int c = read_byte(15000);
-        if (c < 0) { why = "timeout"; goto fail; }
-        hdr[i] = (uint8_t)c;
-    }
-    if (memcmp(hdr, "MYUP", 4) != 0) { why = "bad header"; goto fail; }
-    uint32_t size = hdr[4] | hdr[5] << 8 | hdr[6] << 16 | (uint32_t)hdr[7] << 24;
-    uint32_t crc = hdr[8] | hdr[9] << 8 | hdr[10] << 16 | (uint32_t)hdr[11] << 24;
-    if (size == 0 || size > capacity) { why = "image too big for myos8.img"; goto fail; }
-    for (uint32_t i = 0; i < size; i++) {
-        int c = read_byte(5000);
-        if (c < 0) { why = "timeout while receiving"; goto fail; }
-        UPDATE_BUF[i] = (uint8_t)c;
-    }
-    if (crc32(UPDATE_BUF, size) != crc) { why = "checksum mismatch"; goto fail; }
-
-    // write the new kernel (rest of the file: zeros), checking every sector
-    for (uint32_t s = 0; s < k.sectors; s++) {
-        uint32_t off = s * 512;
-        memset(sector_buf, 0, 512);
-        if (off < size) memcpy(sector_buf, UPDATE_BUF + off, size - off < 512 ? size - off : 512);
-        if (sd_write(k.start_lba + s, sector_buf)) { why = "SD write error"; goto fail; }
-        if (sd_read(k.start_lba + s, verify_buf) || memcmp(sector_buf, verify_buf, 512) != 0) {
-            why = "SD verify error";
-            goto fail;
-        }
-        if ((s & 63) == 0) console_poll();  // keep USB alive
-    }
-    console_puts("UPDATE OK ");
-    print_dec(size);
-    console_puts(" bytes written. Type 'reboot' to start it.\n");
-    return;
-fail:
-    console_puts("UPDATE FAILED ");
+static void receive_failed(const char *word, const char *why) {
+    console_puts(word);
+    console_puts(" FAILED ");
     console_puts(why);
     console_puts("\n");
 }
 
+// receive into RECEIVE_BUF; returns the size, or -1 (failure already reported)
+static int64_t receive_blob(const char *word, uint32_t capacity) {
+    console_puts(word);
+    console_puts(" READY ");
+    print_dec(capacity);
+    console_puts("\n");
+    uint8_t hdr[12];
+    for (int i = 0; i < 12; i++) {
+        int c = read_byte(15000);
+        if (c < 0) { receive_failed(word, "timeout"); return -1; }
+        hdr[i] = (uint8_t)c;
+    }
+    if (memcmp(hdr, "MYUP", 4) != 0) { receive_failed(word, "bad header"); return -1; }
+    uint32_t size = hdr[4] | hdr[5] << 8 | hdr[6] << 16 | (uint32_t)hdr[7] << 24;
+    uint32_t crc = hdr[8] | hdr[9] << 8 | hdr[10] << 16 | (uint32_t)hdr[11] << 24;
+    if (size > capacity) { receive_failed(word, "too big"); return -1; }
+    for (uint32_t i = 0; i < size; i++) {
+        int c = read_byte(5000);
+        if (c < 0) { receive_failed(word, "timeout while receiving"); return -1; }
+        RECEIVE_BUF[i] = (uint8_t)c;
+    }
+    if (crc32(RECEIVE_BUF, size) != crc) { receive_failed(word, "checksum mismatch"); return -1; }
+    return size;
+}
+
+static void cmd_update(void) {
+    fat_file_t k;
+    if (sd_status || fat_find_contiguous("MYOS8   IMG", &k)) {
+        receive_failed("UPDATE", "no usable myos8.img on the SD card");
+        return;
+    }
+    int64_t size = receive_blob("UPDATE", k.sectors * 512);
+    if (size < 0) return;
+    if (size == 0) { receive_failed("UPDATE", "empty image"); return; }
+    // write the new kernel (rest of the file: zeros), checking every sector
+    for (uint32_t s = 0; s < k.sectors; s++) {
+        uint32_t off = s * 512;
+        memset(sector_buf, 0, 512);
+        if (off < size) memcpy(sector_buf, RECEIVE_BUF + off, size - off < 512 ? size - off : 512);
+        if (sd_write(k.start_lba + s, sector_buf)) { receive_failed("UPDATE", "SD write error"); return; }
+        if (sd_read(k.start_lba + s, verify_buf) || memcmp(sector_buf, verify_buf, 512) != 0) {
+            receive_failed("UPDATE", "SD verify error");
+            return;
+        }
+        if ((s & 63) == 0) console_poll();  // keep USB alive
+    }
+    console_puts("UPDATE OK ");
+    print_dec((uint64_t)size);
+    console_puts(" bytes written. Type 'reboot' to start it.\n");
+}
+
+static void cmd_recv(const char *arg) {
+    char name[MYFS_NAME_MAX + 1];
+    if (!myfs_mounted() || !first_word(arg, name) || !myfs_valid_name(name)) {
+        receive_failed("RECV", !myfs_mounted() ? "no file system" : "usage: recv <file>");
+        return;
+    }
+    int64_t size = receive_blob("RECV", 8 * 1024 * 1024);
+    if (size < 0) return;
+    int r = myfs_write(name, RECEIVE_BUF, (uint32_t)size);
+    if (r) {
+        receive_failed("RECV", r == MYFS_ERR_FULL ? "disk full" : "disk error");
+        return;
+    }
+    console_puts("RECV OK ");
+    print_dec((uint64_t)size);
+    console_puts(" bytes saved as ");
+    console_puts(name);
+    console_puts("\n");
+}
+
+// ---------------------------------------------------------------
 int main(void) {
     uart_init();
     led_init();
     setup_mmu_flat_map();           // normal memory + device memory, caches on
     init_caches();
+    extern char myos_vectors[];
+    __asm__ volatile ("msr vbar_el1, %0; isb" :: "r"(myos_vectors));
+    user_init();                    // the 2 MB program area becomes EL0-accessible
+    timer_init();
 #ifndef NO_USB
     usb_init();
     console_enable_usb();
 #endif
+    BP_EnableIRQs();
     storage_init();
     console_puts("\n");
     console_puts(banner);
@@ -555,12 +585,23 @@ int main(void) {
             cmd_rm(arg);
         } else if ((arg = command(line, "format"))) {
             cmd_format(arg);
+        } else if ((arg = command(line, "pkg"))) {
+            pkg_command(arg);
+        } else if ((arg = command(line, "crash"))) {
+            cmd_crash(arg);
         } else if (command(line, "update")) {
             cmd_update();
+        } else if ((arg = command(line, "recv"))) {
+            cmd_recv(arg);
         } else if (command(line, "reboot")) {
             cmd_reboot();
         } else {
-            console_puts("Unknown command. Type 'help'.\n");
+            // not built in: a program on the disk?
+            char name[MYFS_NAME_MAX + 1];
+            const char *args = first_word(line, name);
+            if (!myfs_mounted() || run_program(name, args ? args : "") < 0) {
+                console_puts("Unknown command. Type 'help'.\n");
+            }
         }
     }
 }
