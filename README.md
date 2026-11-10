@@ -61,9 +61,19 @@ powershell -ExecutionPolicy Bypass -File tests\run.ps1
 powershell -ExecutionPolicy Bypass -File arm\install-pi.ps1 -User <ชื่อผู้ใช้> -PiHost <ชื่อเครื่อง>.local
 ```
 
-**อัปเดตครั้งต่อไป:** ถอด SD card มาเสียบคอม คัดลอก `arm\build\kernel8.img` ไปทับ `myos8.img` ในไดรฟ์ `bootfs`
+**ไฟล์ที่ต้องมีในไดรฟ์ `bootfs`** (วางด้วยตัวอ่านการ์ดครั้งแรกครั้งเดียว):
+- `myos8.img` = `arm\build\myos8.img` (kernel ขนาดตายตัว 1 MB เพื่อให้อัปเดตทับที่เดิมได้)
+- `myfs.img` = ระบบไฟล์ของ MyOS สร้างด้วย `python tools\myfs.py myfs.img create 16`
+
+**อัปเดตครั้งต่อไป (ไม่ต้องถอดการ์ด):** เสียบ Pi ทาง USB แล้ว
+```powershell
+powershell -ExecutionPolicy Bypass -File arm\update-pi.ps1
+```
+สคริปต์จะ build ส่ง kernel ใหม่ให้คำสั่ง `update` ของ MyOS (ตรวจ CRC32 และอ่านกลับตรวจทุก sector) แล้วสั่ง `reboot` ถ้าบูตไม่ขึ้น ให้ใช้ตัวอ่านการ์ดวาง `arm\build\myos8.img` ที่ใช้ได้กลับลงไป
 
 **ใช้งาน:** เสียบสาย USB เข้าช่อง **USB** ของ Pi (ช่องกลาง) MyOS จะขึ้นเป็นพอร์ต COM ใหม่ เปิดด้วย PuTTY (Serial) ไฟ LED สีเขียวกะพริบ "ติ๊ก-ติ๊ก… เว้น" = MyOS รันอยู่, กะพริบรัวเร็ว = พัง
+
+คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cat`, `write`, `rm`, `format`, `update`, `reboot` ไฟล์ใน `myfs.img` จัดการจาก Windows ได้ด้วย `tools\myfs.py` (ตอนการ์ดอยู่ในตัวอ่าน)
 
 **กลับไปใช้ Linux:** ในไดรฟ์ `bootfs` ลบ `config.txt` แล้วเปลี่ยนชื่อ `config.txt.linux-backup` เป็น `config.txt`
 

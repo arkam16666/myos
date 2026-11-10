@@ -46,6 +46,14 @@ $failed = $LASTEXITCODE
 $failed = $failed -or $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($failed) { throw "build failed" }
+
+# myos8.img for the SD card: the kernel padded with zeros to a fixed 1 MB,
+# so 'update' can always rewrite it in place (MyOS can't grow FAT files)
+$kernel = [IO.File]::ReadAllBytes("$PSScriptRoot\build\kernel8.img")
+if ($kernel.Length -gt 1MB) { throw "kernel8.img is bigger than 1 MB" }
+$padded = New-Object byte[] 1MB
+[Array]::Copy($kernel, $padded, $kernel.Length)
+[IO.File]::WriteAllBytes("$PSScriptRoot\build\myos8.img", $padded)
 Write-Host "Built arm\build\kernel8.img ($((Get-Item build/kernel8.img).Length) bytes) and kernel8-qemu.img"
 
 if (-not $NoRun) {

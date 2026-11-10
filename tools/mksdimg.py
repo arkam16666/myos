@@ -23,7 +23,8 @@ RESERVED = 32
 MYFS_MB = 8
 
 
-def build(out_path, files=()):
+def build(out_path, files=(), kernel=None):
+    """returns {"myfs": (first sector, sectors), "kernel": (first sector, sectors) or None}"""
     total = CARD_MB * 1024 * 1024 // SECTOR
     part_sectors = total - PART_START
     # FAT32 with one sector per cluster
@@ -41,6 +42,11 @@ def build(out_path, files=()):
     disk.f.close()
     content = open(tmp, "rb").read()
     file_clusters = len(content) // SECTOR
+    # MYOS8.IMG (optional): the kernel padded to 1 MB, right after MYFS.IMG
+    kdata = b""
+    if kernel:
+        kdata = open(kernel, "rb").read().ljust(1024 * 1024, b"\0")
+    kernel_clusters = len(kdata) // SECTOR
 
     img = bytearray(total * SECTOR)
 
@@ -78,9 +84,10 @@ def build(out_path, files=()):
     # FAT: cluster 2 = root directory, clusters 3.. = MYFS.IMG
     fat = bytearray(fat_size * SECTOR)
     struct.pack_into("<III", fat, 0, 0x0FFFFFF8, 0x0FFFFFFF, 0x0FFFFFFF)
-    for i in range(file_clusters):
-        c = 3 + i
-        struct.pack_into("<I", fat, c * 4, c + 1 if i < file_clusters - 1 else 0x0FFFFFFF)
+    for first, count in ((3, file_clusters), (3 + file_clusters, kernel_clusters)):
+        for i in range(count):
+            c = first + i
+            struct.pack_into("<I", fat, c * 4, c + 1 if i < count - 1 else 0x0FFFFFFF)
     for copy in range(2):
         put(PART_START + RESERVED + copy * fat_size, fat)
 
@@ -95,14 +102,25 @@ def build(out_path, files=()):
     struct.pack_into("<H", entry, 26, 3)                    # cluster low
     struct.pack_into("<I", entry, 28, len(content))
     root[32:64] = entry
+    if kdata:
+        kentry = bytearray(32)
+        kentry[0:11] = b"MYOS8   IMG"
+        kentry[11] = 0x20
+        struct.pack_into("<H", kentry, 26, 3 + file_clusters)
+        struct.pack_into("<I", kentry, 28, len(kdata))
+        root[64:96] = kentry
     put(data_start, root)                                   # cluster 2
 
     myfs_lba = data_start + 1                               # cluster 3
     put(myfs_lba, content)
+    kernel_lba = myfs_lba + file_clusters
+    if kdata:
+        put(kernel_lba, kdata)
 
     with open(out_path, "wb") as f:
         f.write(img)
-    return myfs_lba, file_clusters
+    return {"myfs": (myfs_lba, file_clusters),
+            "kernel": (kernel_lba, kernel_clusters) if kdata else None}
 
 
 def read_myfs(card_path, myfs_lba, sectors, out_path):
@@ -117,5 +135,5 @@ def read_myfs(card_path, myfs_lba, sectors, out_path):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(__doc__)
-    lba, n = build(sys.argv[1], sys.argv[2:])
+    lba, n = build(sys.argv[1], sys.argv[2:])["myfs"]
     print(f"{sys.argv[1]}: MYFS.IMG at sectors {lba}-{lba + n - 1}")

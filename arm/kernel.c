@@ -96,7 +96,7 @@ static const char banner[] =
     " | |\\/| | | | | | | \\___ \\ \n"
     " | |  | | |_| | |_| |___) |\n"
     " |_|  |_|\\__, |\\___/|____/ \n"
-    "         |___/   for Raspberry Pi (ARM64) v0.3\n\n"
+    "         |___/   for Raspberry Pi (ARM64) v0.4\n\n"
     "Type 'help' to see commands.\n\n";
 
 static const char prompt[] = "myos> ";
@@ -196,7 +196,9 @@ static void cmd_help(void) {
                  "  cat F     show file F\n"
                  "  write F X write text X into file F\n"
                  "  rm F      delete file F\n"
-                 "  format    erase myfs.img, create an empty file system\n");
+                 "  format    erase myfs.img, create an empty file system\n"
+                 "  update    receive a new MyOS from the PC (arm\\update-pi.ps1)\n"
+                 "  reboot    restart the Pi\n");
 }
 
 static void cmd_info(void) {
@@ -212,7 +214,8 @@ static void cmd_info(void) {
     print_dec(current_el());
     console_puts("\nTimer:      ");
     print_dec(timer_freq() / 1000);
-    console_puts(" kHz\nConsole:    serial (GPIO 14/15)");
+    console_puts(" kHz\nBuilt:      " __DATE__ " " __TIME__);
+    console_puts("\nConsole:    serial (GPIO 14/15)");
 #ifndef NO_USB
     console_puts(" + USB serial");
 #endif
@@ -407,6 +410,105 @@ static void cmd_format(const char *arg) {
     console_puts(" KB free\n");
 }
 
+// ---------------------------------------------------------------
+//  reboot and update over USB / serial
+// ---------------------------------------------------------------
+#ifdef PI4
+#define PM_BASE 0xFE100000UL
+#else
+#define PM_BASE 0x3F100000UL
+#endif
+#define PM_RSTC (*(volatile uint32_t *)(PM_BASE + 0x1C))
+#define PM_WDOG (*(volatile uint32_t *)(PM_BASE + 0x24))
+#define PM_PASSWORD 0x5A000000u
+
+static void cmd_reboot(void) {
+    console_puts("Rebooting...\n");
+    uint64_t end = millis() + 200;          // give USB time to send that
+    while (millis() < end) console_poll();
+    PM_WDOG = PM_PASSWORD | 10;             // watchdog fires in ~150 microseconds
+    PM_RSTC = PM_PASSWORD | (PM_RSTC & ~0x30u) | 0x20;   // ...and does a full reset
+    for (;;) {
+    }
+}
+
+#define UPDATE_BUF ((uint8_t *)0x01000000)  // 16 MB: free RAM to receive into
+
+static uint32_t crc32(const uint8_t *p, uint32_t n) {
+    uint32_t crc = 0xFFFFFFFF;
+    while (n--) {
+        crc ^= *p++;
+        for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1));
+    }
+    return ~crc;
+}
+
+static int read_byte(uint64_t timeout_ms) {
+    uint64_t end = millis() + timeout_ms;
+    while (millis() < end) {
+        int c = console_getc_nowait();
+        if (c >= 0) return c;
+    }
+    return -1;
+}
+
+static uint8_t verify_buf[512] __attribute__((aligned(4)));
+
+// receive a new kernel and write it over myos8.img on the SD card.
+// Protocol (tools: arm\update-pi.ps1):
+//   MyOS: "UPDATE READY <capacity>"   PC: "MYUP", u32 size, u32 crc32, data
+//   MyOS: "UPDATE OK ..." or "UPDATE FAILED <reason>"
+static void cmd_update(void) {
+    fat_file_t k;
+    const char *why = 0;
+    if (sd_status || fat_find_contiguous("MYOS8   IMG", &k)) {
+        console_puts("UPDATE FAILED no usable myos8.img on the SD card\n");
+        return;
+    }
+    uint32_t capacity = k.sectors * 512;
+    console_puts("UPDATE READY ");
+    print_dec(capacity);
+    console_puts("\n");
+
+    uint8_t hdr[12];
+    for (int i = 0; i < 12; i++) {
+        int c = read_byte(15000);
+        if (c < 0) { why = "timeout"; goto fail; }
+        hdr[i] = (uint8_t)c;
+    }
+    if (memcmp(hdr, "MYUP", 4) != 0) { why = "bad header"; goto fail; }
+    uint32_t size = hdr[4] | hdr[5] << 8 | hdr[6] << 16 | (uint32_t)hdr[7] << 24;
+    uint32_t crc = hdr[8] | hdr[9] << 8 | hdr[10] << 16 | (uint32_t)hdr[11] << 24;
+    if (size == 0 || size > capacity) { why = "image too big for myos8.img"; goto fail; }
+    for (uint32_t i = 0; i < size; i++) {
+        int c = read_byte(5000);
+        if (c < 0) { why = "timeout while receiving"; goto fail; }
+        UPDATE_BUF[i] = (uint8_t)c;
+    }
+    if (crc32(UPDATE_BUF, size) != crc) { why = "checksum mismatch"; goto fail; }
+
+    // write the new kernel (rest of the file: zeros), checking every sector
+    for (uint32_t s = 0; s < k.sectors; s++) {
+        uint32_t off = s * 512;
+        memset(sector_buf, 0, 512);
+        if (off < size) memcpy(sector_buf, UPDATE_BUF + off, size - off < 512 ? size - off : 512);
+        if (sd_write(k.start_lba + s, sector_buf)) { why = "SD write error"; goto fail; }
+        if (sd_read(k.start_lba + s, verify_buf) || memcmp(sector_buf, verify_buf, 512) != 0) {
+            why = "SD verify error";
+            goto fail;
+        }
+        if ((s & 63) == 0) console_poll();  // keep USB alive
+    }
+    console_puts("UPDATE OK ");
+    print_dec(size);
+    console_puts(" bytes written. Type 'reboot' to start it.\n");
+    return;
+fail:
+    console_puts("UPDATE FAILED ");
+    console_puts(why);
+    console_puts("\n");
+}
+
 int main(void) {
     uart_init();
     led_init();
@@ -453,6 +555,10 @@ int main(void) {
             cmd_rm(arg);
         } else if ((arg = command(line, "format"))) {
             cmd_format(arg);
+        } else if (command(line, "update")) {
+            cmd_update();
+        } else if (command(line, "reboot")) {
+            cmd_reboot();
         } else {
             console_puts("Unknown command. Type 'help'.\n");
         }

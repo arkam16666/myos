@@ -118,17 +118,89 @@ def check_with_myfs_py(card, lba, sectors):
     return 0 if ok else 1
 
 
+def update_test(machine, image, card, kernel_at):
+    """send a 'new' kernel with the update protocol (as arm/update-pi.ps1 does),
+    check it lands in myos8.img on the card, then reboot"""
+    import struct
+    import zlib
+    new = open(os.path.join(ROOT, image), "rb").read() + b"UPDATED-BY-TEST"
+    qemu = subprocess.Popen([QEMU, "-M", machine, "-kernel", image, "-display", "none",
+                             "-monitor", "none", "-drive", f"file={card},if=sd,format=raw",
+                             "-serial", f"tcp:127.0.0.1:{PORT},server=on,wait=on"],
+                            cwd=ROOT, stderr=subprocess.DEVNULL)
+    for _ in range(50):
+        try:
+            s = socket.create_connection(("127.0.0.1", PORT))
+            break
+        except OSError:
+            time.sleep(0.2)
+    s.settimeout(0.2)
+
+    def read_until(words, seconds):
+        """read until one of words has arrived along with the rest of its line"""
+        data = b""
+        end = time.time() + seconds
+        while time.time() < end:
+            hit = [data.find(w) for w in words if w in data]
+            if hit and b"\n" in data[min(hit):]:
+                break
+            try:
+                data += s.recv(4096)
+            except socket.timeout:
+                pass
+        return data.decode("ascii", "replace")
+
+    results = []
+    try:
+        read_until([b"myos> "], 5)
+        s.sendall(b"update\r")
+        out = read_until([b"UPDATE READY", b"UPDATE FAILED"], 5)
+        results.append(("update ready", "UPDATE READY 1048576" in out, out))
+        s.sendall(b"MYUP" + struct.pack("<II", len(new), zlib.crc32(new)) + new)
+        out = read_until([b"UPDATE OK", b"UPDATE FAILED"], 120)
+        results.append(("update written", f"UPDATE OK {len(new)} bytes" in out, out))
+        s.sendall(b"update\r")                      # a broken transfer must be refused
+        read_until([b"UPDATE READY"], 5)
+        bad = b"\x00" * 100
+        s.sendall(b"MYUP" + struct.pack("<II", len(bad), 12345) + bad)
+        out = read_until([b"UPDATE OK", b"UPDATE FAILED"], 30)
+        results.append(("bad checksum refused", "UPDATE FAILED checksum mismatch" in out, out))
+        s.sendall(b"reboot\r")
+        out = read_until([b"Type 'help'"], 10) + read_until([b"myos> "], 3)
+        results.append(("reboot", "Rebooting" in out and "Type 'help'" in out, out))
+    finally:
+        s.close()
+        qemu.kill()
+        qemu.wait()
+
+    lba, sectors = kernel_at
+    with open(card, "rb") as f:
+        f.seek(lba * 512)
+        on_card = f.read(sectors * 512)
+    results.append(("myos8.img on card replaced",
+                    on_card[:len(new)] == new and on_card[len(new):] == b"\0" * (len(on_card) - len(new)),
+                    f"first bytes {on_card[:16]!r}"))
+    failed = 0
+    for name, ok, info in results:
+        print(f"{'PASS' if ok else 'FAIL'}  {machine}  {name}" + ("" if ok else f"   got: {info!r}"))
+        failed += not ok
+    return failed
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="myos-armtest-")
     card = os.path.join(tmp, "sd.img")
-    lba, sectors = mksdimg.build(card, [os.path.join(ROOT, "files", "readme.txt"),
-                                        os.path.join(ROOT, "files", "hello.py")])
     image = "arm/build/kernel8-qemu.img"
+    layout = mksdimg.build(card, [os.path.join(ROOT, "files", "readme.txt"),
+                                  os.path.join(ROOT, "files", "hello.py")],
+                           kernel=os.path.join(ROOT, image))
+    lba, sectors = layout["myfs"]
     boot_with_sd = [("boot banner + disk", None, ["for Raspberry Pi (ARM64)",
                                                  "MyFS mounted from myfs.img, 2 file(s)"])]
     failed = run("raspi3b", "raspi3b", image, boot_with_sd + BASIC[1:] + SD, sd=card)
     failed += run("raspi3b", "raspi3b", image, SD_AFTER_REBOOT, sd=card)
     failed += check_with_myfs_py(card, lba, sectors)
+    failed += update_test("raspi3b", image, card, layout["kernel"])
 
     # Pi 4 build: no SD support yet, CPU is a Cortex-A72
     pi4 = [(n, c, ["Cortex-A72" if e == "Cortex-A53" else e for e in x]) for n, c, x in BASIC]

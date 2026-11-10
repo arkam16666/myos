@@ -2766,13 +2766,14 @@ ata_wait_ready:
     push rax
     push rcx
     push rdx
+    call ata_timeout_start
     mov dx, ATA_STATUS
-    mov ecx, 1000000
 .loop:
     in al, dx
     test al, ST_BSY
     jz .ok
-    loop .loop
+    call ata_timeout_tick
+    jnc .loop
     stc
     jmp .out
 .ok:
@@ -2783,13 +2784,53 @@ ata_wait_ready:
     pop rax
     ret
 
+; How long to wait for the disk. With interrupts on, a real-time limit
+; (timer ticks), so a slow or busy machine doesn't look like a broken
+; disk; while booting (interrupts still off) count loops instead.
+ATA_TIMEOUT_TICKS equ TIMER_HZ * 5          ; 5 seconds
+
+; -> RCX = deadline in ticks (top bit set) or a loop count
+ata_timeout_start:
+    pushfq
+    test qword [rsp], 0x200                 ; IF: interrupts on?
+    lea rsp, [rsp + 8]                      ; drop the flags (lea keeps ZF)
+    jz .count
+    mov rcx, [ticks]
+    add rcx, ATA_TIMEOUT_TICKS
+    bts rcx, 63
+    ret
+.count:
+    mov ecx, 20000000
+    ret
+
+; CF=1 once the time set by ata_timeout_start is up
+ata_timeout_tick:
+    bt rcx, 63
+    jc .ticks
+    dec rcx
+    jz .up
+    clc
+    ret
+.ticks:
+    push rax
+    mov rax, rcx
+    btr rax, 63
+    cmp [ticks], rax
+    pop rax
+    jae .up
+    clc
+    ret
+.up:
+    stc
+    ret
+
 ; wait until the disk has data for us / wants data. CF=1 on error
 ata_wait_drq:
     push rax
     push rcx
     push rdx
+    call ata_timeout_start
     mov dx, ATA_STATUS
-    mov ecx, 1000000
 .loop:
     in al, dx
     test al, ST_BSY
@@ -2799,7 +2840,8 @@ ata_wait_drq:
     test al, ST_DRQ
     jnz .ok
 .next:
-    loop .loop
+    call ata_timeout_tick
+    jnc .loop
 .fail:
     stc
     jmp .out
