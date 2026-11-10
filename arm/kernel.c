@@ -19,6 +19,7 @@
 #include "uart.h"
 #include "user.h"
 #ifndef NO_USB
+#include "net.h"
 #include "usb.h"
 #endif
 
@@ -93,7 +94,7 @@ static const char banner[] =
     " | |\\/| | | | | | | \\___ \\ \n"
     " | |  | | |_| | |_| |___) |\n"
     " |_|  |_|\\__, |\\___/|____/ \n"
-    "         |___/   for Raspberry Pi (ARM64) v0.5\n\n"
+    "         |___/   for Raspberry Pi (ARM64) v0.6\n\n"
     "Type 'help' to see commands.\n\n";
 
 static const char prompt[] = "myos> ";
@@ -193,6 +194,7 @@ static void cmd_help(void) {
                  "  rm F      delete file F\n"
                  "  format    erase myfs.img, create an empty file system\n"
                  "  pkg       packages: pkg list | info N | install N | remove N\n"
+                 "  net       USB network status (the Pi is 192.168.7.1)\n"
                  "  crash     test the panic screen ('crash pf' = page fault)\n"
                  "  update    receive a new MyOS from the PC (arm\\update-pi.ps1)\n"
                  "  recv F    receive file F from the PC (arm\\push-pi.ps1)\n"
@@ -405,6 +407,25 @@ static void cmd_format(const char *arg) {
     console_puts(" KB free\n");
 }
 
+static void cmd_net(void) {
+#ifdef NO_USB
+    console_puts("No network in this build (QEMU can't be a USB device).\n");
+#else
+    char pc[16];
+    console_puts("Network:  USB network adapter (CDC-NCM)\n"
+                 "This Pi:  192.168.7.1  (name: myos.usb)\n"
+                 "Link:     ");
+    console_puts(net_link_up() ? "up\n" : "down (USB not connected)\n");
+    console_puts("PC:       ");
+    console_puts(net_pc_address(pc) ? pc : "no address handed out yet");
+    console_puts("\nPackets:  ");
+    print_dec(net_packets_in());
+    console_puts(" in, ");
+    print_dec(net_packets_out());
+    console_puts(" out\nTry on the PC:  ping 192.168.7.1\n");
+#endif
+}
+
 static void cmd_crash(const char *arg) {
     if (arg[0] == 'p') {
         *(volatile uint64_t *)0x100000000000ULL = 1;     // not mapped: data abort
@@ -546,6 +567,7 @@ int main(void) {
 #ifndef NO_USB
     usb_init();
     console_enable_usb();
+    net_init();
 #endif
     BP_EnableIRQs();
     storage_init();
@@ -587,6 +609,8 @@ int main(void) {
             cmd_format(arg);
         } else if ((arg = command(line, "pkg"))) {
             pkg_command(arg);
+        } else if (command(line, "net")) {
+            cmd_net();
         } else if ((arg = command(line, "crash"))) {
             cmd_crash(arg);
         } else if (command(line, "update")) {

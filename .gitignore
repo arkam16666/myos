@@ -14,3 +14,4 @@ third_party/
 # Raspberry Pi firmware downloaded for USB boot (see README)
 arm/usbboot/*
 !arm/usbboot/config.txt
+arm/backup/

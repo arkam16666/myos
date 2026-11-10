@@ -52,6 +52,14 @@ int strncmp(const char *a, const char *b, size_t n) {
     return 0;
 }
 
+int atoi(const char *s) {
+    int sign = 1, n = 0;
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s == '-' || *s == '+') sign = (*s++ == '-') ? -1 : 1;
+    while (*s >= '0' && *s <= '9') n = n * 10 + (*s++ - '0');
+    return sign * n;
+}
+
 char *strcpy(char *dst, const char *src) {
     char *d = dst;
     while ((*d++ = *src++)) {

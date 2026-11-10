@@ -31,15 +31,24 @@ $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadco
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
             'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'fat.c', 'myfs.c',
             'user.c', 'pkg.c', 'kernel.c', '../csdk/libc.c')
-$usb    = @('usb.c',
+$usb    = @('usb.c', 'net.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",
-            "$tusb/src/class/cdc/cdc_device.c",
-            "$tusb/src/portable/synopsys/dwc2/dcd_dwc2.c", "$tusb/src/portable/synopsys/dwc2/dwc2_common.c")
+            "$tusb/src/class/cdc/cdc_device.c", "$tusb/src/class/net/ncm_device.c",
+            "$tusb/src/portable/synopsys/dwc2/dcd_dwc2.c", "$tusb/src/portable/synopsys/dwc2/dwc2_common.c",
+            "$tusb/lib/networking/dhserver.c", "$tusb/lib/networking/dnserver.c")
+# lwIP: the TCP/IP stack used for the USB network
+$lwip = "$tusb/lib/lwip/src"
+if (-not (Test-Path $lwip)) { throw "lwIP missing (run tools\get-deps.ps1)" }
+$usb += @('init.c', 'def.c', 'inet_chksum.c', 'ip.c', 'mem.c', 'memp.c', 'netif.c', 'pbuf.c',
+          'tcp.c', 'tcp_in.c', 'tcp_out.c', 'timeouts.c', 'udp.c') | ForEach-Object { "$lwip/core/$_" }
+$usb += @('etharp.c', 'icmp.c', 'ip4.c', 'ip4_addr.c', 'ip4_frag.c') | ForEach-Object { "$lwip/core/ipv4/$_" }
+$usb += "$lwip/netif/ethernet.c"
+$usbflags = @("-I$lwip/include", "-I$tusb/lib/networking")
 
 New-Item -ItemType Directory -Force build | Out-Null
 $ErrorActionPreference = 'Continue'     # compiler warnings on stderr are not errors
-& $clang @flags @common @usb -o build/kernel8.img 2>&1 | ForEach-Object { "$_" } |
+& $clang @flags @usbflags @common @usb -o build/kernel8.img 2>&1 | ForEach-Object { "$_" } |
     Where-Object { $_ -match 'error' } | ForEach-Object { Write-Host $_ }
 $failed = $LASTEXITCODE
 & $clang @flags '-DNO_USB' @common -o build/kernel8-qemu.img 2>&1 | ForEach-Object { "$_" } |

@@ -25,4 +25,12 @@
 #define CFG_TUD_CDC_TX_BUFSIZE      512
 #define CFG_TUD_CDC_EP_BUFSIZE      64
 
+// USB network adapter (CDC-NCM, Windows 10+ has the driver)
+#define CFG_TUD_ECM_RNDIS           0
+#define CFG_TUD_NCM                 1
+#define CFG_TUD_NCM_IN_NTB_MAX_SIZE  2048
+#define CFG_TUD_NCM_OUT_NTB_MAX_SIZE 2048
+#define CFG_TUD_NCM_OUT_NTB_N       1
+#define CFG_TUD_NCM_IN_NTB_N        1
+
 #endif

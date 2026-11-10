@@ -15,6 +15,7 @@ static int usb_read(void) { return -1; }
 void console_enable_usb(void) {}
 void console_panic_mode(void) {}
 #else
+#include "net.h"
 #include "tusb.h"
 
 static int usb_on;
@@ -28,6 +29,7 @@ static void usb_service(void) {
     if (!usb_on) return;
     if (polled) tusb_int_handler(0, true);
     tud_task();
+    if (!polled) net_poll();        // network timers (not after a crash)
 }
 
 static void usb_write(char c) {

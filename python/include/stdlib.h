@@ -4,5 +4,6 @@
 #include <stddef.h>
 
 void abort(void) __attribute__((noreturn));
+int atoi(const char *s);
 
 #endif
