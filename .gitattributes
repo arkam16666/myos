@@ -1,0 +1,8 @@
+# text files: let git pick line endings for this computer
+* text=auto
+# shell scripts run on the Raspberry Pi (Linux): always LF
+*.sh text eol=lf
+# binary files
+*.img binary
+*.bin binary
+*.elf binary
