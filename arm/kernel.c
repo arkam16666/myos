@@ -14,6 +14,7 @@
 #include "myfs.h"
 #include "pkg.h"
 #include "print.h"
+#include "proc.h"
 #include "sd.h"
 #include "timer.h"
 #include "uart.h"
@@ -35,15 +36,26 @@
 //  timer interrupt: 100 ticks per second from the system timer
 // ---------------------------------------------------------------
 volatile uint64_t ticks;
+extern volatile int proc_need_resched;
+
+static uint32_t next_tick;                  // system timer value of the next tick
 
 void TIMER_1_IRQHandler(void) {
     SYSTMR->CS = 1u << 1;                   // acknowledge compare channel 1
-    SYSTMR->C1 = SYSTMR->CLO + 1000000 / TICKS_PER_SECOND;
-    ticks++;
+    do {
+        uint32_t now = SYSTMR->CLO;
+        while ((int32_t)(now - next_tick) >= 0) {   // count ticks missed while we were late
+            ticks++;
+            next_tick += 1000000 / TICKS_PER_SECOND;
+        }
+        SYSTMR->C1 = next_tick;
+    } while ((int32_t)(SYSTMR->CLO - next_tick) >= 0);  // already passed? (else no more interrupts)
+    proc_need_resched = 1;                  // a program has had its 10 ms: next one (proc.c)
 }
 
 static void timer_init(void) {
-    SYSTMR->C1 = SYSTMR->CLO + 1000000 / TICKS_PER_SECOND;   // the timer counts at 1 MHz
+    next_tick = SYSTMR->CLO + 1000000 / TICKS_PER_SECOND;   // the timer counts at 1 MHz
+    SYSTMR->C1 = next_tick;
     SYSTMR->CS = 1u << 1;
     BP_EnableIRQ(TIMER_1_IRQn);
 }
@@ -120,6 +132,11 @@ static void read_line(char *buf, int size) {
         if (c == '\r' || c == '\n') {
             console_putc('\n');
             buf[len] = 0;
+            return;
+        }
+        if (c == 3) {                               // Ctrl+C: forget this line
+            console_puts("^C\n");
+            buf[0] = 0;
             return;
         }
         if ((c == 8 || c == 127) && len > 0) {      // backspace
@@ -200,6 +217,9 @@ static void cmd_help(void) {
                  "  pkg       apps: pkg update | search | install N | remove N | list\n"
                  "  net       USB network status (the Pi is 192.168.7.1)\n"
                  "  passwd    set the SSH password\n"
+                 "  NAME &    run a program in the background\n"
+                 "  ps        running programs;  kill PID  stops one;  fg PID  brings it back\n"
+                 "  Ctrl+C    stops the program in front\n"
                  "  exit      leave an SSH or telnet session\n"
                  "  crash     test the panic screen ('crash pf' = page fault)\n"
                  "  update    receive a new MyOS from the PC (arm\\update-pi.ps1)\n"
@@ -497,6 +517,108 @@ static void cmd_exit(void) {
     console_puts("'exit' ends an SSH or telnet session; there's nothing to leave here.\n");
 }
 
+// ---------------------------------------------------------------
+//  processes: ps, kill, fg
+// ---------------------------------------------------------------
+static void cmd_ps(void) {
+    console_puts("  PID  STATE       MEMORY  TIME  NAME\n");
+    for (int i = 0; i < NPROC; i++) {
+        proc_t *p = proc_slot(i);
+        if (p->state == P_FREE) continue;
+        console_puts("  ");
+        if (p->pid < 10) console_putc(' ');
+        print_dec((uint64_t)p->pid);
+        console_puts("  ");
+        const char *st = i == 0 ? "shell" : p->state == P_ZOMBIE ? "finished"
+                       : p->pid == proc_foreground() ? "foreground" : "background";
+        console_puts(st);
+        for (size_t k = strlen(st); k < 12; k++) console_putc(' ');
+        uint32_t mb = proc_used_blocks(p) * 2;
+        if (mb < 10) console_putc(' ');
+        if (mb < 100) console_putc(' ');
+        print_dec(mb);
+        console_puts(" MB  ");
+        uint64_t secs = i == 0 ? ticks / TICKS_PER_SECOND : (ticks - p->started) / TICKS_PER_SECOND;
+        if (secs < 1000) console_putc(' ');
+        if (secs < 100) console_putc(' ');
+        if (secs < 10) console_putc(' ');
+        print_dec(secs);
+        console_puts("s  ");
+        console_puts(p->name);
+        console_putc('\n');
+    }
+    console_puts("Free memory for programs: ");
+    print_dec((uint64_t)proc_free_blocks() * 2);
+    console_puts(" MB\n");
+}
+
+static int parse_pid(const char *arg) {
+    int n = 0;
+    if (!arg || *arg < '0' || *arg > '9') return -1;
+    while (*arg >= '0' && *arg <= '9') n = n * 10 + (*arg++ - '0');
+    return n;
+}
+
+static void cmd_kill(const char *arg) {
+    int pid = parse_pid(arg);
+    if (pid <= 0 || proc_kill(pid) != 0) {
+        console_puts("Usage: kill PID   (see 'ps'; the shell itself can't be killed)\n");
+        return;
+    }
+    console_puts("Stopping ");
+    print_dec((uint64_t)pid);
+    console_puts(" ...\n");
+    for (int i = 0; i < 50; i++) console_poll();    // let it stop now; the notice follows
+}
+
+static void report_job_end(proc_t *p) {
+    console_puts("[");
+    print_dec((uint64_t)p->pid);
+    console_puts("] ");
+    console_puts(p->name);
+    if (p->exit_code == EXIT_KILLED) console_puts(" was stopped\n");
+    else if (p->exit_code == EXIT_CRASHED) console_puts(" crashed\n");
+    else {
+        console_puts(" finished");
+        if (p->exit_code) {
+            console_puts(" (exit code ");
+            print_dec((uint64_t)p->exit_code);
+            console_putc(')');
+        }
+        console_putc('\n');
+    }
+}
+
+static void report_finished_jobs(void) {
+    for (int i = 1; i < NPROC; i++) {
+        proc_t *p = proc_slot(i);
+        if (p->state == P_ZOMBIE) {
+            if (!console_at_line_start()) console_putc('\n');
+            report_job_end(p);
+            proc_reap(p);
+        }
+    }
+}
+
+static void cmd_fg(const char *arg) {
+    int pid = parse_pid(arg);
+    proc_t *p = pid > 0 ? proc_by_pid(pid) : 0;
+    if (!p || p->state != P_READY) {
+        console_puts("Usage: fg PID   (a background program from 'ps')\n");
+        return;
+    }
+    console_puts("Bringing back ");
+    console_puts(p->name);
+    console_puts(" (Ctrl+C stops it)\n");
+    p->background = 0;
+    proc_set_foreground(pid);
+    int64_t code;
+    if (proc_wait(pid, &code)) {
+        if (!console_at_line_start()) console_putc('\n');
+        if (code == EXIT_KILLED) console_puts("^C - stopped.\n");
+    }
+}
+
 static void cmd_crash(const char *arg) {
     if (arg[0] == 'p') {
         *(volatile uint64_t *)0x100000000000ULL = 1;     // not mapped: data abort
@@ -652,11 +774,27 @@ int main(void) {
 
     char line[250];                 // programs get at most 250 bytes of arguments
     for (;;) {
+        report_finished_jobs();
         console_puts(prompt);
         read_line(line, sizeof line);
+        // "program args &" runs it in the background
+        int background = 0;
+        size_t len = strlen(line);
+        while (len && line[len - 1] == ' ') line[--len] = 0;
+        if (len && line[len - 1] == '&') {
+            background = 1;
+            line[--len] = 0;
+            while (len && line[len - 1] == ' ') line[--len] = 0;
+        }
         const char *arg;
         if (line[0] == 0) {
             continue;
+        } else if (command(line, "ps")) {
+            cmd_ps();
+        } else if ((arg = command(line, "kill"))) {
+            cmd_kill(arg);
+        } else if ((arg = command(line, "fg"))) {
+            cmd_fg(arg);
         } else if (command(line, "help")) {
             cmd_help();
         } else if ((arg = command(line, "echo"))) {
@@ -702,7 +840,7 @@ int main(void) {
             // not built in: a program on the disk?
             char name[MYFS_NAME_MAX + 1];
             const char *args = first_word(line, name);
-            if (!myfs_mounted() || run_program(name, args ? args : "") < 0) {
+            if (!myfs_mounted() || run_program(name, args ? args : "", background) < 0) {
                 if (myfs_mounted() && pkg_python_app(name)) {   // a Python app from pkg
                     char pyargs[128];
                     strcpy(pyargs, name);
@@ -711,7 +849,7 @@ int main(void) {
                         strcat(pyargs, " ");
                         strcat(pyargs, args);
                     }
-                    if (run_program("python", pyargs) < 0) {
+                    if (run_program("python", pyargs, background) < 0) {
                         console_puts("This is a Python app: install python first (pkg install python).\n");
                     }
                 } else {

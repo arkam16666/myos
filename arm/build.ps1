@@ -30,7 +30,7 @@ if ($Pi4) { $flags += '-DPI4' }
 $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadcom/gen/interrupt_handlers.c",
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
             'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'fat.c', 'myfs.c',
-            'user.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c')
+            'user.c', 'proc.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c')
 $usb    = @('usb.c', 'net.c', 'remote.c', 'ssh.c', 'rng.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",

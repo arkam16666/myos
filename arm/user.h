@@ -22,7 +22,7 @@ typedef struct {
 } trapframe_t;
 
 void user_init(void);                               // open the program area to EL0
-int run_program(const char *name, const char *args); // -1 = no such file
+int run_program(const char *name, const char *args, int background); // -1 = no such file
 int program_header_arch(const uint8_t *data, uint32_t size);   // MYEX_ARCH_* or 0
 
 void kernel_fault(trapframe_t *f) __attribute__((noreturn));

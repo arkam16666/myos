@@ -2,6 +2,7 @@
 // and (on real hardware) the USB serial port.
 #include "console.h"
 #include "led.h"
+#include "proc.h"
 #include "timer.h"
 #include "uart.h"
 
@@ -113,6 +114,36 @@ void console_service(void) {
     usb_service();
 }
 
+// Keys from every terminal go into one queue as soon as they arrive, so
+// Ctrl+C is seen even while the foreground program is busy computing.
+#define KEYQ 256
+static uint8_t keyq[KEYQ], keyq_src[KEYQ];
+static unsigned keyq_head, keyq_tail;
+
+static void key_arrived(int c, int src) {
+    if (c == 3 && proc_foreground() != 0) {         // Ctrl+C: stop the foreground program
+        proc_kill(proc_foreground());
+        return;
+    }
+    unsigned next = (keyq_head + 1) % KEYQ;
+    if (next == keyq_tail) return;                  // full: drop
+    keyq[keyq_head] = (uint8_t)c;
+    keyq_src[keyq_head] = (uint8_t)src;
+    keyq_head = next;
+}
+
+static void pump_keys(void) {
+    int c;
+    while (((keyq_head + 1) % KEYQ) != keyq_tail) {
+        if (uart_has_char()) c = (unsigned char)uart_getc(), key_arrived(c, CONSOLE_LOCAL);
+        else if ((c = usb_read()) >= 0) key_arrived(c, CONSOLE_LOCAL);
+        else if (polled) break;
+        else if ((c = remote_getc()) >= 0) key_arrived(c, CONSOLE_TELNET);
+        else if ((c = ssh_getc()) >= 0) key_arrived(c, CONSOLE_SSH);
+        else break;
+    }
+}
+
 void console_poll(void) {
     usb_service();
     if (!polled) {
@@ -120,19 +151,16 @@ void console_poll(void) {
         remote_flush();             // e.g. the echo of a typed key
         ssh_flush();
     }
+    pump_keys();
     led_heartbeat(millis());
+    if (!polled) proc_yield();      // let other processes run while we wait
 }
 
 int console_getc_nowait(void) {
     console_poll();
-    last_source = CONSOLE_LOCAL;
-    if (uart_has_char()) return (unsigned char)uart_getc();
-    int c = usb_read();
-    if (c >= 0 || polled) return c;
-    if ((c = remote_getc()) >= 0) {
-        last_source = CONSOLE_TELNET;
-        return c;
-    }
-    if ((c = ssh_getc()) >= 0) last_source = CONSOLE_SSH;
+    if (keyq_tail == keyq_head) return -1;
+    int c = keyq[keyq_tail];
+    last_source = keyq_src[keyq_tail];
+    keyq_tail = (keyq_tail + 1) % KEYQ;
     return c;
 }

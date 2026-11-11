@@ -13,41 +13,28 @@
 #include "led.h"
 #include "myfs.h"
 #include "print.h"
+#include "proc.h"
 #include "timer.h"
 #include "user.h"
 
-extern uint64_t enter_user(uint64_t entry, uint64_t sp, uint64_t arg, uint64_t *ctx);
-extern void return_to_kernel(uint64_t *ctx, uint64_t code) __attribute__((noreturn));
-extern uint64_t level_2_0x0_0000_0000_to_0x0_4000_0000[512];    // broadcom/mmu.c
-
-static uint64_t kernel_ctx[13];
-static int running;
-
 static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
-static uint64_t rd64(const uint8_t *p) { return rd32(p) | (uint64_t)rd32(p + 4) << 32; }
 
 // ---------------------------------------------------------------
-//  memory: let EL0 use the 2 MB block at USER_BASE, nothing else
+//  memory: every process has its own MMU tables (proc.c)
 // ---------------------------------------------------------------
-#define DESC_AP_EL0_RW  (1ull << 6)     // EL1 and EL0 may read and write
-#define DESC_PXN        (1ull << 53)    // the kernel may not execute it
-#define DESC_UXN        (1ull << 54)    // EL0 may not execute it
-
 void user_init(void) {
-    uint64_t *e = &level_2_0x0_0000_0000_to_0x0_4000_0000[USER_BASE >> 21];
-    *e = (*e | DESC_AP_EL0_RW | DESC_PXN) & ~DESC_UXN;
-    for (uint64_t a = USER_HEAP; a < USER_HEAP_END; a += 0x200000) {    // the heap: data only
-        e = &level_2_0x0_0000_0000_to_0x0_4000_0000[a >> 21];
-        *e |= DESC_AP_EL0_RW | DESC_PXN | DESC_UXN;
-    }
-    __asm__ volatile ("dsb ishst; tlbi vmalle1; dsb ish; isb" ::: "memory");
     // let programs use floating point / SIMD
     __asm__ volatile ("msr cpacr_el1, %0; isb" :: "r"(3ull << 20));
+    proc_init();
 }
 
+// is [addr, addr+len) the program's own memory? (heap blocks get mapped
+// now, so the kernel can touch them without a fault)
 static int user_range(uint64_t addr, uint64_t len) {
     if (addr >= USER_BASE && len <= USER_END - USER_BASE && addr + len <= USER_END) return 1;
-    return addr >= USER_HEAP && len <= USER_HEAP_END - USER_HEAP && addr + len <= USER_HEAP_END;
+    if (addr >= USER_HEAP && len <= USER_HEAP_END - USER_HEAP && addr + len <= USER_HEAP_END)
+        return proc_user_ensure(addr, len);
+    return 0;
 }
 
 // copy a file name from program memory; 0 if it's not a sensible name
@@ -70,47 +57,30 @@ int program_header_arch(const uint8_t *data, uint32_t size) {
 // ---------------------------------------------------------------
 //  running a program
 // ---------------------------------------------------------------
-int run_program(const char *name, const char *args) {
-    int32_t size = myfs_size(name);
-    if (size < 0) return -1;
-    if (size < 16 || (uint32_t)size > USER_MAX_SIZE) {
+int run_program(const char *name, const char *args, int background) {
+    int pid = proc_spawn(name, args, background);
+    if (pid == -1) return -1;                       // no such file
+    if (pid < 0) return 0;                          // (proc_spawn said why)
+    if (background) {
+        console_puts("[");
+        print_dec((uint64_t)pid);
+        console_puts("] ");
         console_puts(name);
-        console_puts(" is not a program.\n");
+        console_puts(" is running in the background ('ps' lists, 'fg ");
+        print_dec((uint64_t)pid);
+        console_puts("' brings it back)\n");
         return 0;
     }
-    uint8_t *base = (uint8_t *)USER_BASE;
-    memset(base, 0, USER_END - USER_BASE);          // wipe the last program
-    memset((void *)USER_HEAP, 0, USER_HEAP_END - USER_HEAP);   // and its heap
-    if (myfs_read(name, 0, base, (uint32_t)size) != size) {
-        console_puts("Disk error!\n");
-        return 0;
+    int64_t code = 0;
+    if (proc_wait(pid, &code)) {
+        if (!console_at_line_start()) console_putc('\n');
+        if (code == EXIT_KILLED) console_puts("^C - stopped.\n");
+        else if (code > 0) {
+            console_puts("Program exited with code ");
+            print_dec((uint64_t)code);
+            console_putc('\n');
+        }
     }
-    int arch = program_header_arch(base, (uint32_t)size);
-    if (arch != MYEX_ARCH_ARM64) {
-        console_puts(name);
-        console_puts(arch == MYEX_ARCH_X86 ? " is a program for MyOS PC (x86), not for the Pi.\n"
-                                           : " is not a program.\n");
-        return 0;
-    }
-    uint64_t entry = rd64(base + 8);
-    if (entry < USER_BASE + 16 || entry >= USER_BASE + (uint64_t)size) {
-        console_puts(name);
-        console_puts(" is not a program.\n");
-        return 0;
-    }
-    size_t n = strlen(args);
-    if (n > 250) n = 250;
-    memcpy((void *)USER_ARGS, args, n);             // the stack starts below this
-
-    // the code was written as data: push it out of the data cache and
-    // make sure the CPU doesn't run stale instructions
-    data_clean_and_invalidate((void *)USER_BASE, USER_END - USER_BASE);
-    __asm__ volatile ("ic iallu; dsb ish; isb" ::: "memory");
-
-    running = 1;
-    enter_user(entry, USER_ARGS, USER_ARGS, kernel_ctx);
-    running = 0;
-    if (!console_at_line_start()) console_putc('\n');
     return 0;
 }
 
@@ -123,8 +93,16 @@ enum {
     SYS_LISTFILES, SYS_KEYNOW
 };
 
+static int is_foreground(void) {
+    return proc_current()->pid == proc_foreground();
+}
+
 static int getkey(void) {
     for (;;) {
+        if (!is_foreground()) {                     // only the foreground program gets keys
+            console_poll();
+            continue;
+        }
         int c = console_getc_nowait();
         if (c < 0) continue;
         if (c == '\r') return '\n';                 // Enter, as on MyOS PC
@@ -161,15 +139,7 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
     char name[MYFS_NAME_MAX + 1];
     switch (n) {
         case SYS_EXIT:
-            running = 0;
-            if (a != 0) {
-                if (!console_at_line_start()) console_putc('\n');
-                console_puts("Program exited with code ");
-                print_dec(a);
-                console_putc('\n');
-            }
-            __asm__ volatile ("msr daifset, #2");
-            return_to_kernel(kernel_ctx, a);
+            proc_exit((int64_t)a);
         case SYS_PRINT:
             for (; user_range(a, 1) && *(const char *)a; a++) console_putc(*(const char *)a);
             console_puts("");
@@ -212,6 +182,10 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
             return size;
         }
         case SYS_KEYNOW: {                          // a key if one is waiting, else -1
+            if (!is_foreground()) {
+                console_poll();
+                return -1;
+            }
             int k = console_getc_nowait();
             if (k == '\r') return '\n';
             if (k == 127) return 8;
@@ -256,6 +230,7 @@ void user_sync(trapframe_t *f) {
         return;
     }
     uint64_t far = read_far();
+    if (ec == 0x24 && proc_handle_fault(far, esr)) return;     // first touch of a heap block
     if (!console_at_line_start()) console_putc('\n');
     console_puts("Program crashed: ");
     console_puts(exception_name(ec));
@@ -266,8 +241,9 @@ void user_sync(trapframe_t *f) {
         print_hex(far, 16);
     }
     console_putc('\n');
-    running = 0;
-    return_to_kernel(kernel_ctx, (uint64_t)-1);
+    if (ec == 0x24 && far >= USER_HEAP && far < USER_HEAP_END)
+        console_puts("  (out of memory: no free RAM for its heap)\n");
+    proc_exit(EXIT_CRASHED);
 }
 
 // the kernel itself crashed: show what happened and stop
