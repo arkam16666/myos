@@ -63,7 +63,7 @@ powershell -ExecutionPolicy Bypass -File arm\install-pi.ps1 -User <ชื่อ�
 
 **ไฟล์ที่ต้องมีในไดรฟ์ `bootfs`** (วางด้วยตัวอ่านการ์ดครั้งแรกครั้งเดียว):
 - `myos8.img` = `arm\build\myos8.img` (kernel ขนาดตายตัว 1 MB เพื่อให้อัปเดตทับที่เดิมได้)
-- `myfs.img` = ระบบไฟล์ของ MyOS สร้างด้วย `python tools\myfs.py myfs.img create 16`
+- `myfs.img` = ระบบไฟล์ของ MyOS สร้างด้วย `python tools\myfs.py myfs.img create 64` (MyFS v2, ตัวเลข = ขนาดเป็น MB ใหญ่ได้ถึงที่ว่างในไดรฟ์ `bootfs`)
 
 **อัปเดตครั้งต่อไป (ไม่ต้องถอดการ์ด):** เสียบ Pi ทาง USB แล้ว
 ```powershell
@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File arm\update-pi.ps1
 
 **ใช้งาน:** เสียบสาย USB เข้าช่อง **USB** ของ Pi (ช่องกลาง) MyOS จะขึ้นเป็นพอร์ต COM ใหม่ เปิดด้วย PuTTY (Serial) ไฟ LED สีเขียวกะพริบ "ติ๊ก-ติ๊ก… เว้น" = MyOS รันอยู่, กะพริบรัวเร็ว = พัง
 
-คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cat`, `write`, `rm`, `format`, `pkg`, `net`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
+คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cd`, `pwd`, `mkdir`, `rmdir`, `tree`, `cat`, `write`, `cp`, `mv`, `rm`, `df`, `fsck`, `fsupgrade`, `format`, `pkg`, `net`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
 
 **เครือข่ายผ่านสาย USB:** นอกจากพอร์ต COM แล้ว Pi ยังขึ้นเป็นการ์ดเครือข่าย "MyOS Network" บน Windows (Windows 10 ขึ้นไปโหลด driver เอง) Pi คือ `192.168.7.1` (ชื่อ `myos.usb`) คอมจะได้ `192.168.7.2` อัตโนมัติ
 - `ping 192.168.7.1`
@@ -103,11 +103,12 @@ pkg install snake 2048  ติดตั้ง (แอป Python จะติด�
 pkg remove snake        ลบ
 pkg upgrade             อัปเดตแอปที่มีเวอร์ชันใหม่
 pkg list                แอปที่อยู่ในเครื่อง
+apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รับ -y, show, purge, full-upgrade)
 ```
-แอปที่มีตอนนี้ (38 ตัว):
-- **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps
-- **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf
-- **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz
+แอปที่มีตอนนี้ (48 ตัว):
+- **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps, chess (หมากรุกกับคอม, เดินแบบ `e2e4`), sudoku, sokoban (เข็นกล่อง 9 ด่าน), invaders
+- **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf, bc (เครื่องคิดเลขเลขยาวไม่จำกัด เหมือน `bc` ของ Linux, `bc -l` มี sin/cos/log), cal (ปฏิทิน มีปี พ.ศ.), sqlite3 (ฐานข้อมูล SQL)
+- **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz, sl (รถไฟ เวลาพิมพ์ `ls` ผิด), neofetch (ข้อมูลเครื่องคู่โลโก้)
 - **ระบบ:** htop (ดู CPU, อุณหภูมิ, หน่วยความจำ, โปรเซส; ลูกศรเลือก, `K` kill, `q` ออก)
 - **โปรแกรม C เดิม:** calc, cdemo, countdown, crashme, fortune, guess, python
 
@@ -115,6 +116,7 @@ pkg list                แอปที่อยู่ในเครื่อ�
 | แพ็กเกจ | ภาษา | ตัวอย่าง |
 |---|---|---|
 | `lua` | Lua 5.4.7 ตัวจริง (port จาก C) | `lua`, `lua -e "print(2^10)"`, `lua game.lua` |
+| `node` | JavaScript (QuickJS 2026-06-04 ตัวจริง สั่งแบบ Node.js) | `node`, `node -e "console.log(2**10)"`, `node app.js` |
 | `python` | MicroPython (Python 3) | `python`, `python hello.py` |
 | `basic` | BASIC แบบมีเลขบรรทัด | `10 PRINT "HI"` แล้ว `RUN`, `SAVE "a.bas"`, `basic a.bas` |
 | `scheme` | Scheme (Lisp) | `(define (sq x) (* x x))` |
@@ -123,13 +125,63 @@ pkg list                แอปที่อยู่ในเครื่อ�
 
 ใช้ `edit` เขียนไฟล์โปรแกรมบน Pi ได้เลย เช่น `edit game.lua` แล้วรันด้วย `lua game.lua`
 
-**C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของ Lua เลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
+**JavaScript** (`pkg install node` หรือ `pkg install nodejs`): เครื่องยนต์ QuickJS ของจริง (ES2023+: class, async/await, BigInt, Map/Set, module) กับหน้าบ้านแบบ Node ที่เขียนเอง
+- `node` เปิด REPL (พิมพ์หลายบรรทัดได้, `await` ได้, `.exit` ออก), `node -e "..."`, `node -p "1+2"`, `node app.js a b` (แบบ CommonJS), ไฟล์ `.mjs` หรือที่มี `import` รันเป็น ES module
+- มี `console.log/error/table/time`, `print`, `prompt("ชื่อ? ")` (อ่านบรรทัดจากคีย์บอร์ด), `setTimeout/setInterval`, `process.argv/exit/env`, `require('fs')` (`readFileSync`, `writeFileSync`, `readdirSync`, `existsSync`, `unlinkSync` ...), `path`, `os`, `util`, `events`, `readline`, `assert`, `require('./mylib')` และ `import ... from 'fs'`
+- ไม่มี: เครือข่าย (`http`), `child_process`, `Buffer` (ใช้ `Uint8Array` แทน), โมดูล `std`/`os` ของ qjs (ต้องใช้ Unix), Intl/Temporal; เรียกฟังก์ชันซ้อนลึกได้ราว 3,300 ชั้น
+- โปรแกรมใหญ่ 726 KB (ใหญ่สุดที่ MyOS รับได้คือ 1 MB)
+
+**SQLite** (`pkg install sqlite3`): SQLite 3.54.1 ตัวจริง ไฟล์ฐานข้อมูลเก็บบน MyFS
+```
+sqlite3 shop.db                              เปิด (หรือสร้าง) แล้วพิมพ์ SQL จบด้วย ;
+sqlite3 shop.db "SELECT * FROM fruit"        รันคำสั่งเดียวแล้วออก
+sqlite3 -box shop.db "SELECT ..."            ตารางสวย (หรือ -csv -json -line -column -table)
+```
+คำสั่งจุด: `.tables`, `.schema`, `.mode box`, `.headers on`, `.import data.csv t`, `.dump`, `.read file.sql`, `.output file`, `.once file`, `.open file`, `.timer on`, `.help`, `.quit` ข้อจำกัด: ฐานข้อมูลอยู่ในหน่วยความจำทั้งก้อนและเขียนลงดิสก์ทุกครั้งที่ commit (ไม่มี WAL, ไม่มี lock)
+
+**C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), โฟลเดอร์ (`opendir`/`readdir`, `mkdir`, `stat`, `chdir`, `getcwd`, `rename`), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` (+ `clock_gettime`, `gettimeofday`), `inttypes.h`, `fenv.h`, `alloca` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua, QuickJS และ SQLite port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของเขาเลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
 
 ข้อจำกัด: Pi ไม่มีนาฬิกา `os.time()` / `time()` นับจาก 1 ม.ค. 2000 ตอนเปิดเครื่อง, ยังรันคำสั่ง shell จากในโปรแกรมไม่ได้ (`os.execute`)
 
 เขียนแอปเพิ่มเองได้: วางไฟล์ `.py` ใน `apps\py\` ใส่บรรทัด `# @version 1.0` และ `# @description ...` แล้วเปิด `tools\repo.py` ใหม่ แอปใช้โมดูล `myos` ได้: `myos.key()` (อ่านปุ่มไม่ต้องรอ Enter), `myos.getkey()`, `myos.clear()`, `myos.move(x, y)`, `myos.cursor(on)`, `myos.ticks()`, `myos.procs()`, `myos.sysinfo()`, `myos.kill(pid)` ทดสอบแอปทั้งหมดใน QEMU ด้วย `python tests\qemu_apps.py`
 
-ข้อจำกัด: MyFS ตอนนี้เก็บได้สูงสุด 64 ไฟล์ (จะแก้ในข้อ 3.4 MyFS v2)
+**ไฟล์และโฟลเดอร์ (MyFS v2):**
+```
+ls [โฟลเดอร์]          ดูไฟล์ (โฟลเดอร์มี / ต่อท้าย)
+cd apps                เข้าโฟลเดอร์ (cd .. ถอยขึ้น, cd เฉยๆ กลับไปที่ /)
+pwd                    อยู่โฟลเดอร์ไหน (prompt ก็บอก เช่น myos:/apps>)
+mkdir games            สร้างโฟลเดอร์ (mkdir -p a/b/c สร้างทั้งสาย)
+rmdir games            ลบโฟลเดอร์ว่าง
+cp a.txt /backup       คัดลอกไฟล์ (ปลายทางเป็นโฟลเดอร์ = ใส่ไว้ในนั้น)
+mv a.txt b.txt         เปลี่ยนชื่อ หรือย้ายไฟล์/โฟลเดอร์ (mv a.txt /backup)
+rm -r games            ลบโฟลเดอร์พร้อมทุกอย่างข้างใน
+tree                   ดูทุกอย่างในโฟลเดอร์แบบต้นไม้
+cat apps/x.py          ทุกคำสั่งใช้ path ได้: /apps/x.py, ../x.txt, ./x.txt
+df                     พื้นที่ทั้งหมด / ที่ใช้ / ที่เหลือ
+fsck                   ตรวจระบบไฟล์ (fsck fix = ลบ entry ที่เสีย)
+```
+- ชื่อยาวได้ 63 ตัวอักษร (ห้ามมีช่องว่าง), เก็บได้หลายพันไฟล์, ไฟล์ใหญ่ได้เท่าที่ว่าง, ลบหรือเขียนไฟล์ให้เล็กลงแล้วได้พื้นที่คืนทันที
+- COM, telnet และ SSH แต่ละ session มีโฟลเดอร์ปัจจุบันของตัวเอง โปรแกรมที่รันจะเริ่มที่โฟลเดอร์นั้น (เช่น `cd games` แล้ว `python snake.py` เปิด `/games/snake.py`)
+- พิมพ์ชื่อโปรแกรมเฉยๆ MyOS หาที่ `/` (ที่ `pkg` ติดตั้ง) ก่อน แล้วค่อยหาในโฟลเดอร์ปัจจุบัน แอป Python จาก `pkg` รันได้จากทุกโฟลเดอร์
+- ไฟดับระหว่างเขียน: เสียอย่างมากแค่ไฟล์ที่กำลังเขียน (ส่วนใหญ่ได้ไฟล์เดิมคืน) เพราะเขียนข้อมูลลงที่ว่างก่อน แล้วค่อยเปลี่ยน entry ใน sector เดียว ตอนบูต MyOS ตรวจทุกโฟลเดอร์และคืนพื้นที่ที่ค้างไว้ให้เอง
+- Python 1.4 ขึ้นไป (`pkg upgrade`): `os.listdir('/apps')`, `os.mkdir`, `os.rmdir`, `os.rename`, `os.stat`, `os.chdir`, `os.getcwd`, `open('apps/x.txt')`
+
+**อัปเกรด MyFS เดิม (v1) เป็น v2** (การ์ดที่สร้างก่อนมี v2): MyFS v1 (สูงสุด 64 ไฟล์ ไม่มีโฟลเดอร์) ยังใช้ได้เหมือนเดิม ตอนบูตจะขึ้นว่า `old MyFS v1` เมื่อพร้อมแล้ว
+1. (แนะนำ) สำรองไว้ก่อน: ถอดการ์ดใส่คอม คัดลอก `myfs.img` จากไดรฟ์ `bootfs` เก็บไว้ แล้วใส่การ์ดกลับ
+2. อัปเดต MyOS เป็นรุ่นที่มี MyFS v2 (`arm\update-pi.ps1`) แล้วดูว่า `ls` เห็นไฟล์ครบ
+3. พิมพ์ `fsupgrade` จะขึ้น `Done: N file(s) kept`
+4. `ls` ดูว่าไฟล์ครบ และ `fsck` ต้องขึ้น `No problems found.` ต่อจากนี้ใช้ `mkdir`, `cd` ได้เลย
+- ไม่มีการย้ายข้อมูลของไฟล์: MyOS เขียนตารางโฟลเดอร์กับ bitmap ใหม่ลงที่ว่าง แล้วเปลี่ยน sector แรกเป็นขั้นสุดท้าย ถ้าไฟดับก่อนขั้นนั้นก็ยังเป็น v1 เหมือนเดิม ถ้าที่ว่างไม่พอ (ไม่ถึง 20 KB) จะไม่แตะอะไรเลย ให้ลบไฟล์ออกสักไฟล์แล้วลองใหม่
+- พื้นที่ที่ v1 ไม่เคยคืน (ไฟล์ที่ลบไปแล้ว) ได้คืนหมดหลังอัปเกรด
+- หลังอัปเกรด MyOS PC (x86) และ kernel ของ Pi รุ่นก่อน v2 อ่าน `myfs.img` นี้ไม่ได้แล้ว ถ้าต้องย้อนกลับ ให้วาง `myfs.img` ที่สำรองไว้กลับลงการ์ด
+- ทำบนคอมแทนก็ได้: `python tools\myfs.py myfs.img upgrade`
+
+**ขยาย `myfs.img` ให้ใหญ่ขึ้น** (เช่น 256 MB): สร้างอันใหม่แล้วคัดลอกทุกอย่างจากอันเดิม (อันเดิมเป็น v1 หรือ v2 ก็ได้)
+```powershell
+python tools\myfs.py myfs-new.img create 256
+python tools\myfs.py myfs-new.img import myfs.img
+```
+แล้ววางทับ `myfs.img` ในไดรฟ์ `bootfs` (ไฟล์ต้องเรียงต่อกันบนการ์ด ถ้าบูตแล้วขึ้น `myfs.img is in pieces` ให้ลบไฟล์อื่นที่ไม่ใช้หรือคัดลอกใหม่) ใหญ่ได้ถึง 4 GB แต่ไม่เกินที่ว่างของ partition `bootfs`
 
 **รันหลายโปรแกรมพร้อมกัน** (multitasking):
 ```
@@ -141,7 +193,7 @@ Ctrl+C                หยุดโปรแกรมที่อยู่ข�
 ```
 - รันได้พร้อมกันสูงสุด 7 โปรแกรม สลับกันทุก 10 ms (preemptive)
 - แต่ละโปรแกรมมีหน่วยความจำแยกกัน: เห็นตัวเองอยู่ที่ `0x400000` เหมือนเดิม แต่ MMU พาไปคนละที่ใน RAM ทำให้โปรแกรมหนึ่งพังหรือเขียนผิดที่ ไม่กระทบตัวอื่น
-- heap (สูงสุด 32 MB ต่อโปรแกรม) ได้ทีละ 2 MB เมื่อใช้จริงเท่านั้น จากคลังรวม 256 MB
+- heap (สูงสุด 32 MB ต่อโปรแกรม) ได้ทีละ 2 MB เมื่อใช้จริงเท่านั้น จากคลังรวมที่ใช้ RAM ทั้งหมดที่ firmware ให้ ARM (Pi Zero 2 W ประมาณ 384 MB, QEMU 896 MB)
 - คีย์บอร์ดไปที่โปรแกรมข้างหน้าเท่านั้น โปรแกรมเบื้องหลังพิมพ์ออกจอได้แต่อ่านคีย์ไม่ได้
 - ข้อจำกัด: Ctrl+C ใน Python จะปิด Python ทั้งตัว
 
@@ -163,7 +215,8 @@ top / free / df / busybox ps ดูโปรเซส หน่วยควา�
 strace PROG ...              รันโปรแกรม Linux แล้วแสดง system call ทุกตัว (ไว้หาว่าขาดอะไร)
 ```
 - ไฟล์ BusyBox มาจากแพ็กเกจ `busybox-static` ของ Alpine Linux: `tools\get-deps.ps1` ดาวน์โหลดและตรวจ SHA-256 ให้ แล้ว `arm\build.ps1` ทำเป็น `busybox.pkg` (แพ็กเกจชนิดใหม่ "linux") ไฟล์ ELF อื่นทำแพ็กเกจได้ด้วย `python tools\mkpkg.py โปรแกรม ไฟล์.info ชื่อ.pkg`
-- MyFS ยังไม่มีโฟลเดอร์ โปรแกรม Linux จึงเห็น `/` เป็นโฟลเดอร์เดียว: `/bin/ls`, `/tmp/x`, `./x` หมายถึงไฟล์ `ls`, `x` ใน MyFS, `/dev/null`, `/dev/tty`, `/proc` มีให้
+- โปรแกรม Linux ใช้โฟลเดอร์ของ MyFS v2 ได้ (`mkdir`, `cd`, `mv`, `rm -r`, `find` ...) และเริ่มในโฟลเดอร์ปัจจุบันของ shell; `/bin/ls`, `/usr/bin/ls` ที่ไม่มีอยู่จริงหมายถึง `/ls` (ที่ pkg ติดตั้ง) หรือ BusyBox, `/tmp` ถูกสร้างให้เมื่อใช้ครั้งแรก, `/dev/null`, `/dev/tty`, `/proc` มีให้
+- โปรแกรมที่รันล่าสุด (เช่น busybox) ถูกเก็บสำเนาไว้ใน RAM จึงเริ่มเร็ว (ตรวจกับไฟล์ทุกครั้ง)
 - ไฟล์ที่โปรแกรมเปิดเขียนจะอยู่ใน RAM ก่อน แล้วบันทึกลง MyFS ตอนปิดไฟล์ (สูงสุด 32 MB ต่อไฟล์)
 - ข้อจำกัด: รันได้เฉพาะโปรแกรม static (ไฟล์จาก `apt` ส่วนใหญ่เป็น dynamic ใช้ glibc + ไลบรารี `.so` ยังรันไม่ได้), ไม่มี thread, ไม่มี socket/network สำหรับโปรแกรม Linux, ผู้ใช้เป็น root (uid 0) คนเดียว, นาฬิกาเริ่มที่ปี 1970 (ตั้งด้วย `date -s` ได้)
 - ทดสอบใน QEMU: `python tests\qemu_linux.py` (ตัวโหลด ELF, system call ด้วย `tests\linux\lxtest.c`, BusyBox, sh, vi, signal, /proc)
@@ -202,6 +255,7 @@ python tools\myfs.py disk.img ls
 python tools\myfs.py disk.img put files\ชื่อ.py
 python tools\myfs.py disk.img get note.txt
 ```
+`tools\myfs.py` ใช้กับ `myfs.img` ของ Pi ได้ด้วย (อ่านเขียนได้ทั้ง v1 และ v2): `ls /apps`, `tree`, `mkdir /apps`, `put game.py /apps/`, `mv`, `rm`, `rmdir`, `info`, `fsck`, `upgrade`, `import อันเดิม.img` (MyOS PC ยังใช้ MyFS v1 `format` ของ disk.img เปล่าจึงได้ v1 เสมอ)
 
 ## โครงสร้างโฟลเดอร์
 
@@ -235,4 +289,7 @@ myos\
 | [TinyUSB](https://github.com/hathach/tinyusb) | USB serial บน MyOS Pi | MIT |
 | [broadcom-peripherals](https://github.com/adafruit/broadcom-peripherals) | โค้ดบูต, MMU, interrupt ของ Pi | MIT |
 | Raspberry Pi firmware | ไฟล์บูตของ Pi | Broadcom (แจกจ่ายได้) |
+| [Lua](https://github.com/lua/lua) | แพ็กเกจ `lua` | MIT |
+| [QuickJS](https://github.com/bellard/quickjs) | แพ็กเกจ `node` (JavaScript) | MIT |
+| [SQLite](https://www.sqlite.org) | แพ็กเกจ `sqlite3` | Public domain |
 | [BusyBox](https://busybox.net/) (`busybox-static` จาก Alpine Linux) | คำสั่งแบบ Linux บน MyOS Pi | GPL-2.0 |

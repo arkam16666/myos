@@ -11,7 +11,7 @@ extern FILE *stdin, *stdout, *stderr;
 
 #define EOF         (-1)
 #define BUFSIZ      1024
-#define FILENAME_MAX 48
+#define FILENAME_MAX 256
 #define FOPEN_MAX   16
 #define L_tmpnam    20
 #define TMP_MAX     1000

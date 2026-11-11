@@ -3,8 +3,10 @@
 // Every program believes it owns 0x400000-0x5FFFFF (code, data, stack) and
 // 0x02000000-0x03FFFFFF (heap), like before. Each process has its own MMU
 // tables that point those addresses at its own 2 MB blocks of RAM, taken
-// from a pool (0x04000000-0x13FFFFFF). Heap blocks are handed out only
-// when the program first touches them (a "page fault").
+// from a pool that starts at 0x04000000 and runs to the end of the RAM the
+// firmware gives the ARM (asked at boot; 448 MB on a Pi Zero 2 W with the
+// default 64 MB for the GPU). Heap blocks are handed out only when the
+// program first touches them (a "page fault").
 //
 // Every process has a kernel stack; switching between processes means
 // switching kernel stacks (proc_switch in vectors.S) and MMU tables.
@@ -13,6 +15,7 @@
 // to worry about being interrupted halfway).
 #include <string.h>
 #include "broadcom/caches.h"
+#include "broadcom/vcmailbox.h"
 #include "console.h"
 #include "linux.h"
 #include "myfs.h"
@@ -29,9 +32,10 @@ extern void fp_restore(uint64_t *state);
 extern uint64_t enter_user(uint64_t entry, uint64_t sp, uint64_t arg, uint64_t *ctx);
 
 #define POOL_START   0x04000000UL
-#define POOL_END     0x14000000UL
+#define POOL_END_DEFAULT 0x14000000UL   // if the firmware can't tell us: 256 MB, fits every Pi
+#define POOL_END_MAX 0x3F000000UL       // the kernel's map has normal RAM only below this
 #define BLOCK        0x200000UL
-#define POOL_BLOCKS  ((POOL_END - POOL_START) / BLOCK)       // 128 x 2 MB
+#define POOL_MAX_BLOCKS ((POOL_END_MAX - POOL_START) / BLOCK)   // 472 x 2 MB
 #define KSTACK_SIZE  (32 * 1024)
 
 #define DESC_AP_EL0_RW  (1ull << 6)
@@ -44,7 +48,8 @@ static proc_t *cur;
 static int next_pid = 1;
 static int tty_fg[NTTY];                // foreground program of each terminal (0 = its shell)
 static int tty_alive[NTTY] = { 1 };
-static uint8_t pool_used[POOL_BLOCKS];
+static uint8_t pool_used[POOL_MAX_BLOCKS];
+static uint32_t pool_blocks = (POOL_END_DEFAULT - POOL_START) / BLOCK;
 static uint64_t l1_tables[NPROC][512] __attribute__((aligned(4096)));
 static uint64_t l2_tables[NPROC][512] __attribute__((aligned(4096)));
 static uint8_t kstacks[NPROC][KSTACK_SIZE] __attribute__((aligned(16)));
@@ -55,7 +60,7 @@ volatile int proc_need_resched;
 static uint64_t block_addr(int b) { return POOL_START + (uint64_t)b * BLOCK; }
 
 static int block_alloc(void) {
-    for (uint32_t i = 0; i < POOL_BLOCKS; i++) {
+    for (uint32_t i = 0; i < pool_blocks; i++) {
         if (!pool_used[i]) {
             pool_used[i] = 1;
             memset((void *)block_addr((int)i), 0, BLOCK);   // no leftovers from others
@@ -67,11 +72,31 @@ static int block_alloc(void) {
 
 uint32_t proc_free_blocks(void) {
     uint32_t n = 0;
-    for (uint32_t i = 0; i < POOL_BLOCKS; i++) n += !pool_used[i];
+    for (uint32_t i = 0; i < pool_blocks; i++) n += !pool_used[i];
     return n;
 }
 
-uint32_t proc_total_blocks(void) { return POOL_BLOCKS; }
+uint32_t proc_total_blocks(void) { return pool_blocks; }
+
+// Ask the firmware where the ARM's RAM ends (the rest belongs to the GPU)
+// and make the pool reach up to there.
+extern bool vcmailbox_request(volatile vcmailbox_buffer_t *buffer);   // broadcom/vcmailbox.c
+
+static void pool_size_from_firmware(void) {
+    struct {
+        uint32_t buffer_size, code;             // = vcmailbox_buffer_t
+        vcmailbox_get_arm_memory_t tag;
+        uint32_t end_tag;
+    } __attribute__((aligned(16))) msg;
+    memset(&msg, 0, sizeof msg);
+    msg.buffer_size = sizeof msg;
+    msg.tag = VCMAILBOX_GET_ARM_MEMORY_DEFAULTS;
+    if (!vcmailbox_request((volatile vcmailbox_buffer_t *)&msg)) return;
+    uint64_t end = (uint64_t)msg.tag.response.base_address + msg.tag.response.size;
+    if (end > POOL_END_MAX) end = POOL_END_MAX;
+    if (end < POOL_START + BLOCK) return;       // nonsense answer: keep the default
+    pool_blocks = (uint32_t)((end - POOL_START) / BLOCK);
+}
 
 static uint64_t idle_ticks;
 
@@ -98,6 +123,7 @@ void proc_init(void) {
     __asm__ volatile ("mrs %0, ttbr0_el1" : "=r"(kernel_ttbr0));
     // memory attributes of normal RAM, from the kernel's own map
     mem_attrs = level_2_0x0_0000_0000_to_0x0_4000_0000[POOL_START / BLOCK] & ~DESC_ADDR_MASK;
+    pool_size_from_firmware();
     procs[0].state = P_READY;
     procs[0].pid = 0;
     procs[0].slot = 0;
@@ -110,6 +136,7 @@ void proc_init(void) {
 }
 
 proc_t *proc_current(void) { return cur; }
+const char *proc_cwd(void) { return cur->cwd[0] ? cur->cwd : "/"; }
 proc_t *proc_slot(int i) { return (i >= 0 && i < NPROC) ? &procs[i] : 0; }
 
 proc_t *proc_by_pid(int pid) {
@@ -300,18 +327,24 @@ int proc_spawn(const char *name, const char *args, int background) {
     data_clean_and_invalidate(p->l2, 4096);
 
     // its name in ps/htop: the program, or for "python app.py" the app
+    // (without the folders: "/apps/snake.py" -> "snake")
     const char *s = name;
+    for (const char *q = name; *q; q++) if (*q == '/') s = q + 1;
     int k = 0;
-    if (strcmp(name, "python") == 0) {
-        const char *e = args;
-        while (*e && *e != ' ') e++;
-        if (e - args > 3 && memcmp(e - 3, ".py", 3) == 0) {
-            for (const char *q = args; q < e - 3 && k < 15; q++) p->name[k++] = *q;
+    if (strcmp(s, "python") == 0) {
+        const char *e = args, *b = args;
+        while (*e && *e != ' ') {
+            if (*e == '/') b = e + 1;
+            e++;
+        }
+        if (e - b > 3 && memcmp(e - 3, ".py", 3) == 0) {
+            for (const char *q = b; q < e - 3 && k < 15; q++) p->name[k++] = *q;
             s = "";
         }
     }
     while (*s && k < 15) p->name[k++] = *s++;
     p->name[k] = 0;
+    strcpy(p->cwd, cur->cwd);                               // starts in its shell's folder
     p->pid = next_pid++;
     p->entry = entry;
     p->background = background;
@@ -410,6 +443,7 @@ proc_t *proc_new(void) {
     memcpy(p->l2, level_2_0x0_0000_0000_to_0x0_4000_0000, sizeof l2_tables[0]);
     p->l1[0] = (level_1_table[0] & 0xFFF) | (uint64_t)p->l2;
     p->tty = cur->tty;
+    strcpy(p->cwd, cur->cwd);                   // starts in its parent's folder
     return p;
 }
 
@@ -430,7 +464,7 @@ void proc_start(proc_t *p, void (*fn)(void), int foreground) {
 
 uint64_t proc_mem_alloc(int n) {
     if (n < 1) return 0;
-    for (uint32_t i = 0; i + (uint32_t)n <= POOL_BLOCKS; i++) {
+    for (uint32_t i = 0; i + (uint32_t)n <= pool_blocks; i++) {
         int k = 0;
         while (k < n && !pool_used[i + k]) k++;
         if (k < n) {
@@ -450,7 +484,7 @@ void proc_mem_free(uint64_t addr, int n) {
 }
 
 int proc_is_pool(uint64_t addr) {
-    return addr >= POOL_START && addr < POOL_START + POOL_BLOCKS * BLOCK;
+    return addr >= POOL_START && addr < POOL_START + (uint64_t)pool_blocks * BLOCK;
 }
 
 uint64_t proc_user_desc(uint64_t addr) {

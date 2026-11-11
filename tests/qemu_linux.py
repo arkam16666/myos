@@ -169,8 +169,16 @@ def main():
         check("free (/proc/meminfo)", re.search(r"Mem:\s+\d+\s+\d+\s+\d+", out) is not None, out)
         out = run("sh -c 'sleep 3 & sleep 1; ps'")
         check("ps (/proc/PID/stat)", re.search(r"\d+ 0\s+0:00 sleep", out) is not None, out)
-        out = run("df")
+        out = run("busybox df")
         check("df (statfs)", re.search(r"myfs\s+\d+\s+\d+\s+\d+\s+\d+% /", out) is not None, out)
+
+        # --- folders (MyFS v2)
+        out = run("sh -c 'mkdir -p /work/sub; cd /work; echo hi > sub/f.txt; pwd; ls --color=never; mv sub/f.txt g.txt; "
+                  "rmdir sub; ls --color=never; cat /work/g.txt'")
+        out2 = run("cat /work/g.txt")
+        check("folders: mkdir, cd, mv, rmdir", "/work\r\nsub\r\ng.txt\r\nhi" in out and "hi" in out2, out + out2)
+        out = run("sh -c 'cd /work; find / -name g.txt; rm -r /work; ls /work'")
+        check("folders: find, rm -r", "/work/g.txt" in out and "No such file" in out, out)
 
         # --- interactive: vi, the shell, Ctrl+C
         send("vi vi.txt")

@@ -92,16 +92,32 @@ static const char *command(const char *line, const char *word) {
     return *line == 0 ? line : 0;
 }
 
-// copy the first word of s into out[48]; returns the rest of s, or 0 if no word
+// copy the first word of s into out[MYFS_PATH_MAX]; returns the rest of s, or 0 if no word
 static const char *first_word(const char *s, char *out) {
     int n = 0;
     while (*s && *s != ' ') {
-        if (n < MYFS_NAME_MAX) out[n++] = *s;
+        if (n < MYFS_PATH_MAX - 1) out[n++] = *s;
         s++;
     }
     out[n] = 0;
     while (*s == ' ') s++;
     return n ? s : 0;
+}
+
+// a path typed in the shell -> absolute, from this terminal's current folder
+static int abs_path(const char *arg, char *out) {
+    if (myfs_normalize(proc_cwd(), arg, out) == 0) return 1;
+    console_puts("Bad name: ");
+    console_puts(arg);
+    console_puts(" (names: 1-63 letters, digits or signs, no spaces)\n");
+    return 0;
+}
+
+static void fs_error(int err, const char *path) {
+    console_puts(myfs_error(err));
+    console_puts(": ");
+    console_puts(path);
+    console_putc('\n');
 }
 
 static const char banner[] =
@@ -113,7 +129,16 @@ static const char banner[] =
     "         |___/   for Raspberry Pi (ARM64) v0.6\n\n"
     "Type 'help' to see commands.\n\n";
 
-static const char prompt[] = "myos> ";
+// "myos> " in the top folder, "myos:/apps> " anywhere else
+static void print_prompt(void) {
+    const char *cwd = proc_cwd();
+    console_puts("myos");
+    if (strcmp(cwd, "/") != 0) {
+        console_putc(':');
+        console_puts(cwd);
+    }
+    console_puts("> ");
+}
 
 static void read_line(char *buf, int size) {
     int len = 0;
@@ -123,7 +148,7 @@ static void read_line(char *buf, int size) {
         if (console_tty() == 0 && usb_take_connect_event()) {   // a terminal opened the COM port
             console_puts("\n");
             console_puts(banner);
-            console_puts(prompt);
+            print_prompt();
             buf[len] = 0;
             console_puts(buf);
         }
@@ -156,6 +181,7 @@ static void read_line(char *buf, int size) {
 static int sd_status = 1;           // 1 = not tried, 0 = ok, <0 = init step that failed
 static int fat_status = 1;
 static myfs_dev_t myfs_dev;
+static int mount_status = MYFS_ERR_NOFS;
 
 static void storage_init(void) {
     sd_status = sd_init();
@@ -167,7 +193,45 @@ static void storage_init(void) {
     myfs_dev.sectors = f.sectors;
     myfs_dev.read = sd_read;
     myfs_dev.write = sd_write;
-    myfs_mount(&myfs_dev);
+    mount_status = myfs_mount(&myfs_dev);
+}
+
+static void print_check_report(const myfs_check_t *r, int full) {
+    if (full) {
+        print_dec(r->files);
+        console_puts(" file(s), ");
+        print_dec(r->dirs);
+        console_puts(" folder(s), ");
+        print_dec(r->used_kb);
+        console_puts(" KB used, ");
+        print_dec(myfs_free_kb());
+        console_puts(" KB free\n");
+    }
+    if (r->leaked_kb) {
+        console_puts("Gave back ");
+        print_dec(r->leaked_kb);
+        console_puts(" KB of lost space (left by an interrupted write).\n");
+    }
+    if (r->missing_kb) {
+        console_puts("Fixed: ");
+        print_dec(r->missing_kb);
+        console_puts(" KB in use were marked free.\n");
+    }
+    if (r->damaged) {
+        print_dec(r->damaged);
+        console_puts(" damaged entr");
+        console_puts(r->damaged == 1 ? "y" : "ies");
+        console_puts(" (bad or shared sectors):\n");
+        for (uint32_t i = 0; i < r->damaged && i < 4; i++) {
+            console_puts("  ");
+            console_puts(r->damaged_path[i]);
+            console_putc('\n');
+        }
+    }
+    if (r->too_deep) console_puts("Some folders could not be read (too deep or a disk error).\n");
+    if (full && !r->leaked_kb && !r->missing_kb && !r->damaged && !r->too_deep) {
+        console_puts("No problems found.\n");
+    }
 }
 
 static void print_storage_status(void) {
@@ -183,11 +247,32 @@ static void print_storage_status(void) {
     } else if (fat_status) {
         console_puts("can't read the boot partition\n\n");
     } else if (!myfs_mounted()) {
-        console_puts("myfs.img has no file system. Type 'format' to create one.\n\n");
+        if (mount_status == MYFS_ERR_NOFS) {
+            console_puts("myfs.img has no file system. Type 'format' to create one.\n\n");
+        } else {                    // there is a MyFS, it just can't be used: never suggest format
+            console_puts("myfs.img has MyFS, but it can't be mounted (");
+            console_puts(myfs_error(mount_status));
+            console_puts(").\n      Don't 'format': copy myfs.img to the PC and run\n"
+                         "      python tools/myfs.py myfs.img fsck\n\n");
+        }
     } else {
         console_puts("MyFS mounted from myfs.img, ");
         print_dec((uint64_t)myfs_count());
-        console_puts(" file(s). Type 'ls' to list them.\n\n");
+        console_puts(" file(s)");
+        if (myfs_version() == 1) {
+            console_puts(". Type 'ls' to list them.\n"
+                         "      (old MyFS v1: no folders, 64 files at most. Type 'fsupgrade' to\n"
+                         "       make it MyFS v2 - every file is kept.)\n\n");
+        } else {
+            if (myfs_dir_count()) {
+                console_puts(", ");
+                print_dec((uint64_t)myfs_dir_count());
+                console_puts(" folder(s)");
+            }
+            console_puts(". Type 'ls' to list them.\n");
+            print_check_report(myfs_mount_check(), 0);
+            console_putc('\n');
+        }
     }
 }
 
@@ -209,12 +294,21 @@ static void cmd_help(void) {
                  "  clear     clear the screen\n"
                  "  sd        SD card and file system details\n"
                  "  hexdump N show raw bytes of SD card sector N\n"
-                 "  ls        list files\n"
+                 "  ls [P]    list a folder (P: a path like /apps or ..)\n"
+                 "  cd P      go to folder P ('cd' alone: the top folder /);  pwd  where am I\n"
+                 "  mkdir P   new folder ('mkdir -p a/b/c' makes the parents too)\n"
+                 "  rmdir P   delete an empty folder\n"
+                 "  tree [P]  everything inside a folder\n"
                  "  cat F     show file F\n"
                  "  write F X write text X into file F\n"
-                 "  rm F      delete file F\n"
+                 "  cp A B    copy a file;  mv A B  rename or move a file or folder\n"
+                 "  rm F      delete file F ('rm -r P' deletes a folder and all in it)\n"
+                 "  df        how full the disk (MyFS) is\n"
+                 "  fsck      check the file system ('fsck fix' removes damaged entries)\n"
+                 "  fsupgrade turn an old MyFS v1 into v2 (folders), keeping every file\n"
                  "  format    erase myfs.img, create an empty file system\n"
                  "  pkg       apps: pkg update | search | install N | remove N | list\n"
+                 "  apt       the same as pkg (apt install -y N, apt show N ...)\n"
                  "  net       USB network status (the Pi is 192.168.7.1)\n"
                  "  passwd    set the SSH password\n"
                  "  NAME &    run a program in the background\n"
@@ -277,7 +371,9 @@ static void cmd_sd(void) {
     print_dec(sd_sectors() / 2048);
     console_puts(" MB, controller clock ");
     print_dec(sd_base_clock() / 1000000);
-    console_puts(" MHz\nmyfs.img: ");
+    console_puts(" MHz, on ");
+    console_puts(sd_controller());
+    console_puts("\nmyfs.img: ");
     if (fat_status) {
         console_puts("not usable (");
         print_signed(fat_status);
@@ -292,8 +388,13 @@ static void cmd_sd(void) {
     print_dec(myfs_dev.sectors / 2048);
     console_puts(" MB)\nMyFS:     ");
     if (myfs_mounted()) {
+        console_puts(myfs_version() == 2 ? "v2, " : "v1 (old: 'fsupgrade' makes it v2), ");
         print_dec((uint64_t)myfs_count());
         console_puts(" file(s), ");
+        if (myfs_version() == 2) {
+            print_dec((uint64_t)myfs_dir_count());
+            console_puts(" folder(s), ");
+        }
         print_dec(myfs_free_kb());
         console_puts(" KB free\n");
     } else {
@@ -330,36 +431,272 @@ static void cmd_hexdump(const char *arg) {
     }
 }
 
-static void cmd_ls(void) {
-    if (!need_fs()) return;
-    char name[MYFS_NAME_MAX + 1];
-    uint32_t size;
-    int i;
-    for (i = 0; myfs_entry(i, name, &size) == 0; i++) {
-        console_puts("  ");
-        console_puts(name);
-        for (int pad = (int)strlen(name); pad < 34; pad++) console_putc(' ');
+static void pad_to(int written, int width) {
+    while (written++ < width) console_putc(' ');
+}
+
+static void ls_line(const char *name, int type, uint32_t size) {
+    console_puts("  ");
+    console_puts(name);
+    int w = (int)strlen(name);
+    if (type == MYFS_DIR) {
+        console_putc('/');
+        pad_to(w + 1, 34);
+        console_puts("<folder>\n");
+    } else {
+        pad_to(w, 34);
         print_dec(size);
         console_puts(" bytes\n");
     }
-    if (i == 0) console_puts("  (no files)\n");
-    print_dec((uint64_t)i);
+}
+
+// ls [path]: a folder (default: the current one), folders shown with a '/'
+static void cmd_ls(const char *arg) {
+    if (!need_fs()) return;
+    char path[MYFS_PATH_MAX], name[MYFS_NAME_MAX + 1], word[MYFS_PATH_MAX];
+    if (!abs_path(first_word(arg, word) ? word : ".", path)) return;
+    uint32_t size;
+    int t = myfs_stat(path, &size);
+    if (t < 0) {
+        fs_error(t, word[0] ? word : path);
+        return;
+    }
+    if (t == MYFS_FILE) {
+        ls_line(word, t, size);
+        return;
+    }
+    int files = 0, dirs = 0;
+    for (int i = 0; (t = myfs_readdir(path, i, name, &size)) > 0; i++) {
+        ls_line(name, t, size);
+        if (t == MYFS_DIR) dirs++;
+        else files++;
+    }
+    if (t < 0) fs_error(t, path);
+    if (files + dirs == 0) console_puts("  (no files)\n");
+    print_dec((uint64_t)files);
     console_puts(" file(s), ");
+    if (dirs) {
+        print_dec((uint64_t)dirs);
+        console_puts(" folder(s), ");
+    }
     print_dec(myfs_free_kb());
     console_puts(" KB free\n");
 }
 
-static void cmd_cat(const char *arg) {
-    char name[MYFS_NAME_MAX + 1];
+static void cmd_cd(const char *arg) {
     if (!need_fs()) return;
-    if (!first_word(arg, name)) {
+    char path[MYFS_PATH_MAX], word[MYFS_PATH_MAX];
+    if (!abs_path(first_word(arg, word) ? word : "/", path)) return;
+    int t = myfs_stat(path, 0);
+    if (t < 0) fs_error(t, word);
+    else if (t != MYFS_DIR) fs_error(MYFS_ERR_NOTDIR, word);
+    else strcpy(proc_current()->cwd, path);
+}
+
+static void cmd_mkdir(const char *arg) {
+    if (!need_fs()) return;
+    char path[MYFS_PATH_MAX], word[MYFS_PATH_MAX];
+    int parents = 0;
+    const char *rest = first_word(arg, word);
+    if (rest && strcmp(word, "-p") == 0) {
+        parents = 1;
+        rest = first_word(rest, word);
+    }
+    if (!rest) {
+        console_puts("Usage: mkdir [-p] <folder>\n");
+        return;
+    }
+    if (!abs_path(word, path)) return;
+    if (parents) {                          // each folder on the way, if it isn't there yet
+        for (char *s = path + 1; *s; s++) {
+            if (*s != '/') continue;
+            *s = 0;
+            int t = myfs_stat(path, 0);
+            int r = t == MYFS_ERR_NOTFOUND ? myfs_mkdir(path) : t == MYFS_FILE ? MYFS_ERR_NOTDIR : 0;
+            *s = '/';
+            if (r < 0) {
+                fs_error(r, word);
+                return;
+            }
+        }
+        if (myfs_stat(path, 0) == MYFS_DIR) return;
+    }
+    int r = myfs_mkdir(path);
+    if (r) fs_error(r, word);
+}
+
+static void cmd_rmdir(const char *arg) {
+    if (!need_fs()) return;
+    char path[MYFS_PATH_MAX], word[MYFS_PATH_MAX];
+    if (!first_word(arg, word)) {
+        console_puts("Usage: rmdir <folder>\n");
+        return;
+    }
+    if (!abs_path(word, path)) return;
+    if (strcmp(path, proc_cwd()) == 0 ||
+        (strncmp(proc_cwd(), path, strlen(path)) == 0 && proc_cwd()[strlen(path)] == '/')) {
+        console_puts("You are inside that folder: 'cd ..' first.\n");
+        return;
+    }
+    int r = myfs_rmdir(path);
+    if (r == MYFS_ERR_NOTEMPTY) console_puts("Folder is not empty (use 'rm -r' to delete it with everything in it).\n");
+    else if (r) fs_error(r, word);
+}
+
+// path + "/" + name into out (path is absolute)
+static int join(const char *path, const char *name, char *out) {
+    size_t n = strlen(path), m = strlen(name);
+    if (n + 1 + m >= MYFS_PATH_MAX) return 0;
+    strcpy(out, path);
+    if (n > 1) out[n++] = '/';
+    strcpy(out + n, name);
+    return 1;
+}
+
+// "cp a /apps" or "mv a /apps": a folder as the target means "into it"
+static int target_path(const char *from, const char *to_word, char *to) {
+    if (!abs_path(to_word, to)) return 0;
+    if (myfs_stat(to, 0) == MYFS_DIR) {
+        const char *b = from;
+        for (const char *s = from; *s; s++) if (*s == '/') b = s + 1;
+        char dir[MYFS_PATH_MAX];
+        strcpy(dir, to);
+        if (!join(dir, b, to)) {
+            console_puts("Path too long.\n");
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void cmd_cp_mv(const char *arg, int move) {
+    if (!need_fs()) return;
+    char a[MYFS_PATH_MAX], b[MYFS_PATH_MAX], from[MYFS_PATH_MAX], to[MYFS_PATH_MAX];
+    const char *rest = first_word(arg, a);
+    if (!rest || !first_word(rest, b)) {
+        console_puts(move ? "Usage: mv <from> <to>\n" : "Usage: cp <file> <to>\n");
+        return;
+    }
+    if (!abs_path(a, from) || !target_path(from, b, to)) return;
+    int r = move ? myfs_rename(from, to) : myfs_copy(from, to);
+    if (r == MYFS_ERR_ISDIR && !move) console_puts("cp copies files; folders: use mv, or mkdir + cp.\n");
+    else if (r) fs_error(r, r == MYFS_ERR_NOTFOUND && myfs_stat(from, 0) >= 0 ? b : a);
+    else if (move && strncmp(proc_cwd(), from, strlen(from)) == 0 &&
+             (proc_cwd()[strlen(from)] == '/' || proc_cwd()[strlen(from)] == 0)) {
+        strcpy(proc_current()->cwd, "/");   // we were in the folder that moved
+    }
+}
+
+static void tree(char *path, int depth, int *files, int *dirs) {
+    char name[MYFS_NAME_MAX + 1], sub[MYFS_PATH_MAX];
+    uint32_t size;
+    int t;
+    for (int i = 0; (t = myfs_readdir(path, i, name, &size)) > 0; i++) {
+        for (int k = 0; k <= depth; k++) console_puts("  ");
+        console_puts(name);
+        if (t == MYFS_DIR) {
+            console_puts("/\n");
+            (*dirs)++;
+            if (depth < MYFS_DEPTH_MAX && join(path, name, sub)) tree(sub, depth + 1, files, dirs);
+        } else {
+            console_puts("  (");
+            print_dec(size);
+            console_puts(" bytes)\n");
+            (*files)++;
+        }
+    }
+}
+
+static void cmd_tree(const char *arg) {
+    if (!need_fs()) return;
+    char path[MYFS_PATH_MAX], word[MYFS_PATH_MAX];
+    if (!abs_path(first_word(arg, word) ? word : ".", path)) return;
+    int t = myfs_stat(path, 0);
+    if (t != MYFS_DIR) {
+        fs_error(t < 0 ? t : MYFS_ERR_NOTDIR, path);
+        return;
+    }
+    int files = 0, dirs = 0;
+    console_puts(path);
+    console_putc('\n');
+    tree(path, 0, &files, &dirs);
+    print_dec((uint64_t)files);
+    console_puts(" file(s), ");
+    print_dec((uint64_t)dirs);
+    console_puts(" folder(s)\n");
+}
+
+static void print_size_kb(uint32_t kb) {       // 512K, 14.8M (like df -h)
+    if (kb < 1024) {
+        print_dec(kb);
+        console_putc('K');
+        return;
+    }
+    uint32_t tenths = (uint32_t)(((uint64_t)kb * 10 + 512) / 1024);
+    print_dec(tenths / 10);
+    console_putc('.');
+    print_dec(tenths % 10);
+    console_putc('M');
+}
+
+static int size_width(uint32_t kb) {            // characters print_size_kb will use
+    int digits = 1;
+    uint32_t v = kb < 1024 ? kb : (uint32_t)(((uint64_t)kb * 10 + 512) / 1024 / 10);
+    while (v >= 10) { v /= 10; digits++; }
+    return kb < 1024 ? digits + 1 : digits + 3;
+}
+
+static void df_column(uint32_t kb) {
+    pad_to(size_width(kb), 7);
+    print_size_kb(kb);
+}
+
+static int dec_width(uint64_t v) {
+    int n = 1;
+    while (v >= 10) { v /= 10; n++; }
+    return n;
+}
+
+// df [-h]: how full MyFS is (sizes are always "human readable")
+static void cmd_df(void) {
+    if (!need_fs()) return;
+    uint32_t size = myfs_total_kb(), avail = myfs_free_kb();
+    uint32_t used = size > avail ? size - avail : 0;
+    console_puts("Filesystem   Size   Used  Avail  Use%  Files  Mounted on\n");
+    console_puts("myfs.img  ");
+    df_column(size);
+    df_column(used);
+    df_column(avail);
+    uint32_t pct = size ? (uint32_t)(((uint64_t)used * 100 + size - 1) / size) : 0;
+    pad_to(pct >= 100 ? 3 : pct >= 10 ? 2 : 1, 5);
+    print_dec(pct);
+    console_putc('%');
+    int files = myfs_count();
+    if (myfs_version() == 1) {                  // v1: a directory of 64 places
+        pad_to(dec_width((uint64_t)files) + 3, 7);
+        print_dec((uint64_t)files);
+        console_puts("/");
+        print_dec(MYFS_MAX_FILES);
+    } else {
+        pad_to(dec_width((uint64_t)files), 7);
+        print_dec((uint64_t)files);
+    }
+    console_puts("  /\n");
+}
+
+static void cmd_cat(const char *arg) {
+    char word[MYFS_PATH_MAX], name[MYFS_PATH_MAX];
+    if (!need_fs()) return;
+    if (!first_word(arg, word)) {
         console_puts("Usage: cat <file>\n");
         return;
     }
+    if (!abs_path(word, name)) return;
     int32_t size = myfs_size(name);
     if (size < 0) {
-        console_puts("No such file: ");
-        console_puts(name);
+        if (size == MYFS_ERR_ISDIR) console_puts("That's a folder (try 'ls'): ");
+        else console_puts("No such file: ");
+        console_puts(word);
         console_putc('\n');
         return;
     }
@@ -380,13 +717,14 @@ static void cmd_cat(const char *arg) {
 }
 
 static void cmd_write(const char *arg) {
-    char name[MYFS_NAME_MAX + 1];
+    char word[MYFS_PATH_MAX], name[MYFS_PATH_MAX];
     if (!need_fs()) return;
-    const char *text = first_word(arg, name);
+    const char *text = first_word(arg, word);
     if (!text) {
         console_puts("Usage: write <file> <text>\n");
         return;
     }
+    if (!abs_path(word, name)) return;
     char data[96];
     size_t n = strlen(text);
     if (n > sizeof data - 1) n = sizeof data - 1;
@@ -396,26 +734,115 @@ static void cmd_write(const char *arg) {
     if (r == MYFS_ERR_FULL) {
         console_puts("Disk or directory is full.\n");
     } else if (r) {
-        console_puts("Disk error!\n");
+        fs_error(r, word);
     } else {
         console_puts("Wrote ");
         print_dec(n);
         console_puts(" bytes to ");
-        console_puts(name);
+        console_puts(word);
         console_putc('\n');
     }
 }
 
+// rm -r: a folder with everything inside it
+static int remove_tree(const char *path) {
+    int t = myfs_stat(path, 0);
+    if (t == MYFS_FILE) return myfs_remove(path);
+    if (t < 0) return t;
+    char name[MYFS_NAME_MAX + 1], sub[MYFS_PATH_MAX];
+    for (;;) {
+        int r = myfs_readdir(path, 0, name, 0);
+        if (r < 0) return r;
+        if (r == 0) break;
+        if (!join(path, name, sub)) return MYFS_ERR_NAME;
+        if ((r = remove_tree(sub)) < 0) return r;
+    }
+    return myfs_rmdir(path);
+}
+
 static void cmd_rm(const char *arg) {
-    char name[MYFS_NAME_MAX + 1];
+    char word[MYFS_PATH_MAX], name[MYFS_PATH_MAX];
     if (!need_fs()) return;
-    if (!first_word(arg, name)) {
-        console_puts("Usage: rm <file>\n");
+    const char *rest = first_word(arg, word);
+    int recursive = rest && strcmp(word, "-r") == 0;
+    if (recursive) rest = first_word(rest, word);
+    if (!rest) {
+        console_puts("Usage: rm <file>   or   rm -r <folder>\n");
         return;
     }
-    console_puts(myfs_remove(name) == 0 ? "Removed " : "No such file: ");
-    console_puts(name);
-    console_putc('\n');
+    if (!abs_path(word, name)) return;
+    if (recursive) {
+        size_t n = strlen(name);
+        if (strcmp(name, "/") == 0 || (strncmp(proc_cwd(), name, n) == 0 &&
+                                       (proc_cwd()[n] == '/' || proc_cwd()[n] == 0))) {
+            console_puts(strcmp(name, "/") == 0 ? "Not the top folder (use 'format yes' to erase all).\n"
+                                                : "You are inside that folder: 'cd ..' first.\n");
+            return;
+        }
+        int r = remove_tree(name);
+        if (r) fs_error(r, word);
+        else {
+            console_puts("Removed ");
+            console_puts(word);
+            console_putc('\n');
+        }
+        return;
+    }
+    int r = myfs_remove(name);
+    if (r == MYFS_ERR_ISDIR) console_puts("That's a folder: use rmdir, or rm -r to delete everything in it.\n");
+    else if (r && r != MYFS_ERR_NOTFOUND) fs_error(r, word);
+    else {
+        console_puts(r == 0 ? "Removed " : "No such file: ");
+        console_puts(word);
+        console_putc('\n');
+    }
+}
+
+static void cmd_fsck(const char *arg) {
+    if (!need_fs()) return;
+    if (myfs_version() == 1) {
+        console_puts("This is the old MyFS v1 (nothing to check: no bitmap, no folders).\n"
+                     "Type 'fsupgrade' to make it MyFS v2.\n");
+        return;
+    }
+    myfs_check_t r;
+    console_puts("Checking every folder and file...\n");
+    int e = myfs_check(strcmp(arg, "fix") == 0, &r);
+    if (e) {
+        console_puts("Check failed: ");
+        console_puts(myfs_error(e));
+        console_putc('\n');
+        return;
+    }
+    print_check_report(&r, 1);
+    if (r.damaged && strcmp(arg, "fix") != 0) {
+        console_puts("Type 'fsck fix' to remove the damaged entries (data another file uses stays).\n");
+    } else if (r.damaged) {
+        console_puts("Removed them.\n");
+    }
+}
+
+static void cmd_fsupgrade(void) {
+    if (!need_fs()) return;
+    if (myfs_version() == 2) {
+        console_puts("Already MyFS v2.\n");
+        return;
+    }
+    console_puts("Upgrading MyFS v1 -> v2. File data stays where it is; a new folder table\n"
+                 "and free-space bitmap are written into free space, then the first sector.\n");
+    int n = myfs_upgrade();
+    if (n < 0) {
+        console_puts("Upgrade failed: ");
+        console_puts(myfs_error(n));
+        console_puts(myfs_version() == 1 ? ". Nothing was changed.\n"
+                                         : ". Type 'fsck' to look at the result.\n");
+        return;
+    }
+    console_puts("Done: ");
+    print_dec((uint64_t)n);
+    console_puts(" file(s) kept, ");
+    print_dec(myfs_free_kb());
+    console_puts(" KB free. Folders work now: try 'mkdir'.\n");
 }
 
 static void cmd_format(const char *arg) {
@@ -431,7 +858,8 @@ static void cmd_format(const char *arg) {
         console_puts("Disk error!\n");
         return;
     }
-    console_puts("myfs.img formatted with MyFS. ");
+    for (int i = 0; i < NPROC; i++) strcpy(proc_slot(i)->cwd, "/");     // old folders are gone
+    console_puts("myfs.img formatted with MyFS v2. ");
     print_dec(myfs_free_kb());
     console_puts(" KB free\n");
 }
@@ -747,8 +1175,9 @@ static void cmd_update(void) {
 }
 
 static void cmd_recv(const char *arg) {
-    char name[MYFS_NAME_MAX + 1];
-    if (!myfs_mounted() || !first_word(arg, name) || !myfs_valid_name(name)) {
+    char word[MYFS_PATH_MAX], name[MYFS_PATH_MAX];
+    if (!myfs_mounted() || !first_word(arg, word) ||
+        myfs_normalize(proc_cwd(), word, name) || !myfs_valid_name(name)) {
         receive_failed("RECV", !myfs_mounted() ? "no file system" : "usage: recv <file>");
         return;
     }
@@ -756,7 +1185,8 @@ static void cmd_recv(const char *arg) {
     if (size < 0) return;
     int r = myfs_write(name, RECEIVE_BUF, (uint32_t)size);
     if (r) {
-        receive_failed("RECV", r == MYFS_ERR_FULL ? "disk full" : "disk error");
+        receive_failed("RECV", r == MYFS_ERR_FULL ? "disk full" : r == MYFS_ERR_IO ? "disk error"
+                                                                        : myfs_error(r));
         return;
     }
     console_puts("RECV OK ");
@@ -764,6 +1194,17 @@ static void cmd_recv(const char *arg) {
     console_puts(" bytes saved as ");
     console_puts(name);
     console_puts("\n");
+}
+
+// a command's program: "prog" is looked for in the top folder (where pkg
+// installs), then in the current folder; "dir/prog" is a path
+static int find_program(const char *name, char *out) {
+    if (myfs_normalize("/", name, out)) return 0;
+    for (const char *s = name; *s; s++) {
+        if (*s == '/') return myfs_normalize(proc_cwd(), name, out) == 0 && myfs_stat(out, 0) == MYFS_FILE;
+    }
+    if (myfs_stat(out, 0) == MYFS_FILE) return 1;
+    return myfs_normalize(proc_cwd(), name, out) == 0 && myfs_stat(out, 0) == MYFS_FILE;
 }
 
 // ---------------------------------------------------------------
@@ -816,7 +1257,7 @@ static void shell_loop(void) {
     char line[250];                 // programs get at most 250 bytes of arguments
     for (;;) {
         report_finished_jobs();
-        console_puts(prompt);
+        print_prompt();
         read_line(line, sizeof line);
         // "program args &" runs it in the background
         int background = 0;
@@ -851,8 +1292,29 @@ static void shell_loop(void) {
             cmd_sd();
         } else if ((arg = command(line, "hexdump"))) {
             cmd_hexdump(arg);
-        } else if (command(line, "ls")) {
-            cmd_ls();
+        } else if ((arg = command(line, "ls"))) {
+            cmd_ls(arg);
+        } else if ((arg = command(line, "cd"))) {
+            cmd_cd(arg);
+        } else if (command(line, "pwd")) {
+            console_puts(proc_cwd());
+            console_putc('\n');
+        } else if ((arg = command(line, "mkdir"))) {
+            cmd_mkdir(arg);
+        } else if ((arg = command(line, "rmdir"))) {
+            cmd_rmdir(arg);
+        } else if ((arg = command(line, "cp"))) {
+            cmd_cp_mv(arg, 0);
+        } else if ((arg = command(line, "mv"))) {
+            cmd_cp_mv(arg, 1);
+        } else if ((arg = command(line, "tree"))) {
+            cmd_tree(arg);
+        } else if ((arg = command(line, "fsck"))) {
+            cmd_fsck(arg);
+        } else if (command(line, "fsupgrade")) {
+            cmd_fsupgrade();
+        } else if (command(line, "df") || command(line, "df -h")) {
+            cmd_df();
         } else if ((arg = command(line, "cat"))) {
             cmd_cat(arg);
         } else if ((arg = command(line, "write"))) {
@@ -863,6 +1325,8 @@ static void shell_loop(void) {
             cmd_format(arg);
         } else if ((arg = command(line, "pkg"))) {
             pkg_command(arg);
+        } else if ((arg = command(line, "apt")) || (arg = command(line, "apt-get"))) {
+            apt_command(arg);
         } else if (command(line, "net")) {
             cmd_net();
         } else if (command(line, "passwd")) {
@@ -881,22 +1345,25 @@ static void shell_loop(void) {
             // strace PROGRAM ...: a Linux program with its system calls shown
         } else {
             // not built in: a program on the disk?
-            char name[MYFS_NAME_MAX + 1];
+            char name[MYFS_PATH_MAX], prog[MYFS_PATH_MAX];
             const char *args = first_word(line, name);
-            if (!myfs_mounted() || run_program(name, args ? args : "", background) < 0) {
+            if (!myfs_mounted() || !find_program(name, prog) ||
+                run_program(prog, args ? args : "", background) < 0) {
                 if (myfs_mounted() && pkg_python_app(name)) {   // a Python app from pkg
                     char pyargs[128];
-                    strcpy(pyargs, name);
+                    // (in another folder, python needs the app's full path)
+                    strcpy(pyargs, strcmp(proc_cwd(), "/") == 0 ? "" : "/");
+                    strcat(pyargs, name);
                     strcat(pyargs, ".py");
                     if (args && strlen(args) < sizeof pyargs - 24) {
                         strcat(pyargs, " ");
                         strcat(pyargs, args);
                     }
-                    if (run_program("python", pyargs, background) < 0) {
+                    if (run_program("/python", pyargs, background) < 0) {
                         console_puts("This is a Python app: install python first (pkg install python).\n");
                     }
                 } else if (myfs_mounted() && linux_applet(name)) {    // "vi" = "busybox vi"
-                    linux_run("busybox", name, args ? args : "", background);
+                    linux_run("/busybox", name, args ? args : "", background);
                 } else {
                     console_puts("Unknown command. Type 'help'.\n");
                 }

@@ -3,6 +3,7 @@
 #define PROC_H
 #include <stdint.h>
 #include "console.h"
+#include "myfs.h"
 
 #define NPROC 16                // slot 0 is the shell of terminal 0
 
@@ -27,6 +28,7 @@ typedef struct {
     uint64_t started;           // ticks
     uint64_t cpu_ticks;         // ticks it was running when the timer went off
     int waiting;                // in a system call that waits (keys, sleep): not really busy
+    char cwd[MYFS_PATH_MAX];    // current folder ("" = "/"); a program starts in its shell's
     int linux;                  // a Linux program (linux.c): Linux system calls, its own memory map
     int parent;                 // Linux: pid of the program that waits for it (0 = the shell, -1 = nobody)
     uint64_t tpidr;             // TPIDR_EL0: the thread pointer (Linux programs keep TLS there)
@@ -57,6 +59,7 @@ uint32_t proc_total_blocks(void);
 void proc_tick(void);                   // timer interrupt: charge the running process
 uint64_t proc_idle_ticks(void);         // ticks when only a waiting shell was running
 uint32_t proc_used_blocks(const proc_t *p);
+const char *proc_cwd(void);             // current folder of the running process ("/a/b")
 
 // for linux.c (Linux programs build their own memory map)
 #define PROC_BLOCK 0x200000UL           // the MMU maps programs in 2 MB blocks

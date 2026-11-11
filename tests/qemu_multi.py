@@ -183,8 +183,9 @@ def main():
         out = read(2, "myos> ")
         send("ps")
         out += read(3, "Free memory")
+        # QEMU's raspi3b: 1 GB, the firmware keeps 64 MB for the GPU, the kernel the first 64 MB
         check("Ctrl+C at prompt, memory all free", "^C" in out and "Unknown command" not in out
-              and "Free memory for programs: 256 MB" in out, out)
+              and "Free memory for programs: 896 MB" in out, out)
     finally:
         s.close()
         qemu.kill()

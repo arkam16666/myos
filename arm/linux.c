@@ -11,10 +11,11 @@
 //   0x00400000-0x03FFFFFF  the program (ELF segments) and its brk heap
 //   0x40000000-0x7FFFFFFF  mmap() memory, the stack (8 MB at the top)
 //
-// Files: MyFS is flat, so "/" (and ".") is the only directory; "/bin/ls",
-// "/tmp/x" and "./x" mean the file "ls", "x"... A command that isn't a file
-// but a BusyBox applet runs busybox. Files opened for writing are kept in
-// RAM and written to MyFS when the last descriptor closes.
+// Files: MyFS paths (v2 has folders; the current folder is proc->cwd).
+// "/bin/X" (also /usr/bin, /sbin ...) that doesn't exist means "/X" (where
+// pkg installs), or busybox if X is one of its applets. /dev/null, /dev/tty
+// ... and a small /proc are made up here. Files opened for writing are kept
+// in RAM and written to MyFS when the last descriptor closes.
 // Processes: fork (a full copy of the memory), execve, wait4, pipes; enough
 // for "busybox sh". Signals: handlers run on a Linux signal frame (rt_sigreturn
 // comes back), delivered when the program returns from a system call or an
@@ -116,8 +117,7 @@ typedef struct {
     uint64_t pending;           // signals waiting for their handler
     uint64_t saved_mask;        // rt_sigsuspend: the mask to go back to after the handler
     int restore_mask;
-    char exe[MYFS_NAME_MAX + 1];// its MyFS file (for /proc/self/exe)
-    char cwd[24];               // current folder without the "/": "" (= /), "proc", "proc/12"
+    char exe[MYFS_PATH_MAX];    // its MyFS file (for /proc/self/exe)
     uint64_t entry, sp;         // where it starts
     trapframe_t frame;          // fork: the child's first registers
     int term_sig;               // stopped by this signal (wait4 tells the parent)
@@ -139,7 +139,7 @@ enum { FT_TTY = 1, FT_FILE, FT_DIR, FT_NULL, FT_ZERO, FT_RANDOM, FT_PIPE_R, FT_P
 
 typedef struct {
     int refs, type, flags;
-    char name[MYFS_NAME_MAX + 1];
+    char name[MYFS_PATH_MAX];   // FT_FILE, FT_DIR: its MyFS path
     uint64_t off;               // file position (FT_DIR: entry number)
     uint64_t size;              // FT_FILE: its size
     uint8_t *buf;               // FT_FILE opened for writing: the whole file in RAM
@@ -529,77 +529,74 @@ static int fd_close(lx_t *x, int fd) {
 }
 
 // --- paths: MyFS is flat, "/" is the only directory
-enum { R_FILE = 1, R_ROOT, R_NULL, R_ZERO, R_TTY, R_RANDOM, R_FD, R_PROCDIR, R_PROCFILE };
+enum { R_FILE = 1, R_DIR, R_NULL, R_ZERO, R_TTY, R_RANDOM, R_FD, R_PROCDIR, R_PROCFILE };
 
 static int resolve_proc(const char *rest, char *name, int *arg);
-static int resolve_abs(const char *path, char *name, int *fdno);
-
+static int strchr_(const char *s, char c);
 static int applet_lookup(const char *name);
 
-// path -> what it means; name gets the MyFS file name (R_FILE) or fd (R_FD)
-// for_exec: "/bin/X" may be a BusyBox applet
-static int resolve(const char *path, char *name, int *fdno) {
-    const char *s = path;
-    if (!*s) return -ENOENT;
-    const char *cwd = LX(proc_current())->cwd;
-    if (*s != '/' && cwd[0] && !(s[0] == '.' && s[1] == '.')) {      // relative to /proc...
-        char full[300];
-        size_t c = strlen(cwd), n = strlen(s);
-        if (c + 1 + n >= sizeof full) return -ENAMETOOLONG;
-        memcpy(full, cwd, c);
-        full[c] = '/';
-        memcpy(full + c + 1, s, n + 1);
-        if (!strcmp(s, ".")) full[c] = 0;
-        return resolve_abs(full, name, fdno);
+static int fs_err(int e) {                          // MyFS error -> Linux errno
+    switch (e) {
+        case MYFS_ERR_NOTFOUND: return -ENOENT;
+        case MYFS_ERR_FULL: return -ENOSPC;
+        case MYFS_ERR_NAME: return -EINVAL;
+        case MYFS_ERR_EXISTS: return -EEXIST;
+        case MYFS_ERR_NOTDIR: return -ENOTDIR;
+        case MYFS_ERR_ISDIR: return -EISDIR;
+        case MYFS_ERR_NOTEMPTY: return -ENOTEMPTY;
+        case MYFS_ERR_V1: return -EPERM;
     }
-    return resolve_abs(path, name, fdno);
+    return -EIO;
 }
 
-static int resolve_abs(const char *path, char *name, int *fdno) {
-    const char *s = path;
-    for (;;) {                                      // "/", "./", "//" in front
-        if (*s == '/') s++;
-        else if (s[0] == '.' && s[1] == '/') s += 2;
-        else if (s[0] == '.' && s[1] == '.' && (s[2] == '/' || !s[2])) s += 2;
-        else break;
-    }
-    size_t n = strlen(s);
-    while (n && s[n - 1] == '/') n--;
-    if (n == 0 || (n == 1 && s[0] == '.')) return R_ROOT;
-    char tmp[256];
-    if (n >= sizeof tmp) return -ENAMETOOLONG;
-    memcpy(tmp, s, n);
-    tmp[n] = 0;
-    if (!strcmp(tmp, "dev/null")) return R_NULL;
-    if (!strcmp(tmp, "dev/zero")) return R_ZERO;
-    if (!strcmp(tmp, "dev/tty") || !strcmp(tmp, "dev/console")) return R_TTY;
-    if (!strcmp(tmp, "dev/random") || !strcmp(tmp, "dev/urandom")) return R_RANDOM;
-    if (!strcmp(tmp, "dev/stdin") || !strcmp(tmp, "proc/self/fd/0")) { *fdno = 0; return R_FD; }
-    if (!strcmp(tmp, "dev/stdout") || !strcmp(tmp, "proc/self/fd/1")) { *fdno = 1; return R_FD; }
-    if (!strcmp(tmp, "dev/stderr") || !strcmp(tmp, "proc/self/fd/2")) { *fdno = 2; return R_FD; }
-    if (!strcmp(tmp, "proc/self/exe")) {
+static const char *const bin_dirs[] = { "/bin/", "/usr/bin/", "/sbin/", "/usr/sbin/", "/usr/local/bin/" };
+
+// path -> what it means: name gets the MyFS path (R_FILE, R_DIR) or *fdno the
+// descriptor (R_FD) / the /proc entry (R_PROCDIR, R_PROCFILE)
+static int resolve(const char *path, char *name, int *fdno) {
+    if (!*path) return -ENOENT;
+    char abs[MYFS_PATH_MAX];
+    if (myfs_normalize(proc_cwd(), path, abs)) return -ENAMETOOLONG;
+    if (!strcmp(abs, "/dev/null")) return R_NULL;
+    if (!strcmp(abs, "/dev/zero")) return R_ZERO;
+    if (!strcmp(abs, "/dev/tty") || !strcmp(abs, "/dev/console")) return R_TTY;
+    if (!strcmp(abs, "/dev/random") || !strcmp(abs, "/dev/urandom")) return R_RANDOM;
+    if (!strcmp(abs, "/dev/stdin") || !strcmp(abs, "/proc/self/fd/0")) { *fdno = 0; return R_FD; }
+    if (!strcmp(abs, "/dev/stdout") || !strcmp(abs, "/proc/self/fd/1")) { *fdno = 1; return R_FD; }
+    if (!strcmp(abs, "/dev/stderr") || !strcmp(abs, "/proc/self/fd/2")) { *fdno = 2; return R_FD; }
+    if (!strcmp(abs, "/proc/self/exe")) {
         strcpy(name, LX(proc_current())->exe);
         return R_FILE;
     }
-    if (!memcmp(tmp, "proc", 4) && (!tmp[4] || tmp[4] == '/')) return resolve_proc(tmp + 4, name, fdno);
-    static const char *const dirs[] = { "bin/", "usr/bin/", "sbin/", "usr/sbin/", "usr/local/bin/",
-                                        "tmp/", "root/", "home/" };
-    const char *f = tmp;
-    for (unsigned i = 0; i < sizeof dirs / sizeof dirs[0]; i++) {
-        size_t k = strlen(dirs[i]);
-        if (!memcmp(tmp, dirs[i], k - 1) && (tmp[k - 1] == '/' || !tmp[k - 1])) {
-            if (!tmp[k - 1]) return R_ROOT;         // "/bin" itself
-            f = tmp + k;
-            if (i < 5 && myfs_size(f) < 0 && applet_lookup(f)) f = "busybox";
-            break;
-        }
+    if (!memcmp(abs, "/proc", 5) && (!abs[5] || abs[5] == '/')) return resolve_proc(abs + 5, name, fdno);
+    strcpy(name, abs);
+    int t = myfs_stat(abs, 0);
+    if (t == MYFS_DIR) return R_DIR;
+    if (t == MYFS_FILE) return R_FILE;
+    for (unsigned i = 0; i < sizeof bin_dirs / sizeof bin_dirs[0]; i++) {   // "/bin/ls" -> "/ls", busybox
+        size_t k = strlen(bin_dirs[i]);
+        if (strncmp(abs, bin_dirs[i], k) || strchr_(abs + k, '/')) continue;
+        char top[MYFS_PATH_MAX];
+        top[0] = '/';
+        strcpy(top + 1, abs + k);
+        if (myfs_stat(top, 0) == MYFS_FILE) strcpy(name, top);
+        else if (applet_lookup(abs + k)) strcpy(name, "/busybox");
+        return R_FILE;
     }
-    for (const char *q = f; *q; q++)
-        if (*q == '/') return -ENOENT;
-    if (strlen(f) > MYFS_NAME_MAX) return -ENAMETOOLONG;
-    if (!myfs_valid_name(f)) return -ENOENT;
-    strcpy(name, f);
-    return R_FILE;
+    if (!strcmp(abs, "/tmp") || !strncmp(abs, "/tmp/", 5)) {    // no /tmp yet: make it (or use "/" on v1)
+        if (myfs_version() == 2) myfs_mkdir("/tmp");
+        else if (abs[4]) memmove(name, abs + 4, strlen(abs + 4) + 1);
+        else strcpy(name, "/");
+        if (myfs_stat(name, 0) == MYFS_DIR) return R_DIR;
+    }
+    if (!myfs_valid_name(name)) return t == MYFS_ERR_NOTDIR ? -ENOTDIR : -ENOENT;
+    return R_FILE;                                  // (may not exist yet: open with O_CREAT)
+}
+
+static int strchr_(const char *s, char c) {
+    for (; *s; s++)
+        if (*s == c) return 1;
+    return 0;
 }
 
 static int upath(proc_t *p, uint64_t a, char *name, int *fdno) {
@@ -609,12 +606,10 @@ static int upath(proc_t *p, uint64_t a, char *name, int *fdno) {
     return resolve(path, name, fdno);
 }
 
-static int dir_index(const char *name) {           // its place in MyFS (inode number)
-    char n[MYFS_NAME_MAX + 1];
-    uint32_t size;
-    for (int i = 0; myfs_entry(i, n, &size) == 0; i++)
-        if (!strcmp(n, name)) return i;
-    return -1;
+static uint64_t path_ino(const char *path) {      // an inode number: a hash of the path
+    uint64_t h = 1469598103934665603ull;
+    for (; *path; path++) h = (h ^ (uint8_t)*path) * 1099511628211ull;
+    return (h >> 1) | 16;
 }
 
 static int is_program(const char *name) {
@@ -660,14 +655,15 @@ static void stat_fill(kstat_t *st, uint32_t mode, uint64_t size, uint64_t ino, u
 
 static int stat_kind(int kind, const char *name, kstat_t *st) {
     switch (kind) {
-        case R_ROOT:
-            stat_fill(st, S_IFDIR | 0755, 4096, 2, 0);
+        case R_DIR:
+            if (myfs_stat(name, 0) != MYFS_DIR) return -ENOENT;
+            stat_fill(st, S_IFDIR | 0755, 4096, strcmp(name, "/") ? path_ino(name) : 2, 0);
             return 0;
         case R_FILE: {
             int32_t size = myfs_size(name);
             if (size < 0) return -ENOENT;
             stat_fill(st, S_IFREG | (is_program(name) ? 0755 : 0644), (uint64_t)size,
-                      (uint64_t)dir_index(name) + 3, 0);
+                      path_ino(name), 0);
             return 0;
         }
         case R_NULL:   stat_fill(st, S_IFCHR | 0666, 0, 100, 0x103); return 0;
@@ -686,7 +682,7 @@ static int stat_file(file_t *f, kstat_t *st) {
         case FT_NULL: return stat_kind(R_NULL, 0, st);
         case FT_ZERO: return stat_kind(R_ZERO, 0, st);
         case FT_RANDOM: return stat_kind(R_RANDOM, 0, st);
-        case FT_DIR: return stat_kind(R_ROOT, 0, st);
+        case FT_DIR: return stat_kind(R_DIR, f->name, st);
         case FT_PROCDIR: return stat_kind(R_PROCDIR, 0, st);
         case FT_PROC: return stat_kind(R_PROCFILE, 0, st);
         case FT_PIPE_R: case FT_PIPE_W:
@@ -694,7 +690,7 @@ static int stat_file(file_t *f, kstat_t *st) {
             return 0;
         case FT_FILE:
             stat_fill(st, S_IFREG | (is_program(f->name) ? 0755 : 0644), f->size,
-                      (uint64_t)dir_index(f->name) + 3, 0);
+                      path_ino(f->name), 0);
             return 0;
     }
     return -EBADF;
@@ -933,16 +929,16 @@ static int proc_text(int arg, char *out, int cap) {
     return t->n;
 }
 
-static void set_cwd_proc(lx_t *x, int pid) {
-    strcpy(x->cwd, "proc");
+static void set_cwd_proc(proc_t *p, int pid) {    // the current folder is /proc or /proc/PID
+    strcpy(p->cwd, "/proc");
     if (!pid) return;
     char d[12];
     int n = 0;
     do { d[n++] = (char)('0' + pid % 10); pid /= 10; } while (pid);
-    int k = 4;
-    x->cwd[k++] = '/';
-    while (n) x->cwd[k++] = d[--n];
-    x->cwd[k] = 0;
+    int k = 5;
+    p->cwd[k++] = '/';
+    while (n) p->cwd[k++] = d[--n];
+    p->cwd[k] = 0;
 }
 
 static int64_t sys_statfs(proc_t *p, int kind, uint64_t a) {
@@ -955,25 +951,21 @@ static int64_t sys_statfs(proc_t *p, int kind, uint64_t a) {
         o[8] = 255;
         return 0;
     }
-    uint64_t used = 0, free_kb = myfs_free_kb();
-    char n[MYFS_NAME_MAX + 1];
-    uint32_t size;
-    int files_n = 0;
-    for (int i = 0; myfs_entry(i, n, &size) == 0; i++, files_n++) used += (size + 1023) / 1024;
+    uint64_t free_kb = myfs_free_kb(), files_n = (uint64_t)myfs_count() + (uint64_t)myfs_dir_count();
     o[0] = 0x4D59;                                  // f_type ("MY")
     o[1] = 1024;                                    // f_bsize
-    o[2] = used + free_kb;                          // f_blocks
+    o[2] = myfs_total_kb();                         // f_blocks
     o[3] = o[4] = free_kb;                          // f_bfree, f_bavail
-    o[5] = MYFS_MAX_FILES;                          // f_files
-    o[6] = (uint64_t)(MYFS_MAX_FILES - files_n);    // f_ffree
-    o[8] = MYFS_NAME_MAX;                           // f_namelen
+    o[5] = myfs_version() == 2 ? files_n + free_kb : MYFS_MAX_FILES;     // f_files
+    o[6] = o[5] - files_n;                          // f_ffree
+    o[8] = myfs_version() == 2 ? MYFS_NAME_MAX : MYFS_V1_NAME_MAX;      // f_namelen
     o[9] = 1024;                                    // f_frsize
     return 0;
 }
 
 static int64_t do_open(proc_t *p, uint64_t upathname, int flags) {
     lx_t *x = LX(p);
-    char name[MYFS_NAME_MAX + 1];
+    char name[MYFS_PATH_MAX];
     int fdno = 0;
     int kind = upath(p, upathname, name, &fdno);
     if (kind < 0) return kind;
@@ -985,9 +977,10 @@ static int64_t do_open(proc_t *p, uint64_t upathname, int flags) {
         if (!fget(x, fdno)) return -ENOENT;
         fi = x->fd[fdno];
         files[fi].refs++;
-    } else if (kind == R_ROOT) {
+    } else if (kind == R_DIR) {
         if (acc != 0) return -EISDIR;
         fi = file_new(FT_DIR, flags);
+        if (fi >= 0) strcpy(files[fi].name, name);
     } else if (kind == R_PROCDIR) {
         if (acc != 0) return -EISDIR;
         fi = file_new(FT_PROCDIR, flags);
@@ -1013,6 +1006,7 @@ static int64_t do_open(proc_t *p, uint64_t upathname, int flags) {
         if (size < 0 && !(flags & O_CREAT)) return -ENOENT;
         if (size >= 0 && (flags & O_CREAT) && (flags & O_EXCL)) return -EEXIST;
         if (size >= 0 && (flags & O_DIRECTORY)) return -ENOTDIR;
+        if (size < 0 && (flags & O_DIRECTORY)) return -ENOENT;
         fi = file_new(FT_FILE, flags);
         if (fi < 0) return fi;
         file_t *f = &files[fi];
@@ -1526,6 +1520,7 @@ static int64_t sys_getdents64(proc_t *p, file_t *f, uint64_t ubuf, uint64_t len)
         char name[MYFS_NAME_MAX + 1];
         uint32_t size;
         int type = 8;                               // DT_REG
+        int t;
         uint64_t ino;
         if (f->off == 0) { strcpy(name, "."); type = 4; ino = 2; }
         else if (f->off == 1) { strcpy(name, ".."); type = 4; ino = 2; }
@@ -1533,7 +1528,10 @@ static int64_t sys_getdents64(proc_t *p, file_t *f, uint64_t ubuf, uint64_t len)
             if (!proc_entry(f->pid, (int)f->off - 2, name, &type)) break;
             ino = 1000 + f->off;
         }
-        else if (myfs_entry((int)f->off - 2, name, &size) == 0) ino = f->off + 1;
+        else if ((t = myfs_readdir(f->name, (int)f->off - 2, name, &size)) > 0) {
+            ino = f->off + 1;
+            if (t == MYFS_DIR) type = 4;
+        }
         else break;
         uint64_t nl = strlen(name);
         uint64_t reclen = (19 + nl + 1 + 7) & ~7ull;
@@ -2147,7 +2145,7 @@ static char applet_names[4096];     // the applet table from the busybox file ("
 static int32_t applets_len = -1, applets_of_size = -1;
 
 static void load_applets(void) {
-    int32_t size = myfs_size("busybox");
+    int32_t size = myfs_size("/busybox");
     if (size == applets_of_size) return;
     applets_of_size = size;
     applets_len = 0;
@@ -2155,11 +2153,11 @@ static void load_applets(void) {
     static uint8_t chunk[4096 + 16];
     static const char marker[] = "\0[\0[[\0";
     for (int32_t off = 0; off < size; off += 4096) {
-        int n = myfs_read("busybox", (uint32_t)off, chunk, sizeof chunk);
+        int n = myfs_read("/busybox", (uint32_t)off, chunk, sizeof chunk);
         if (n <= 6) break;
         for (int i = 0; i + 6 <= n && i < 4096; i++) {
             if (memcmp(chunk + i, marker, 6) != 0) continue;
-            int got = myfs_read("busybox", (uint32_t)(off + i + 1), applet_names, sizeof applet_names - 2);
+            int got = myfs_read("/busybox", (uint32_t)(off + i + 1), applet_names, sizeof applet_names - 2);
             if (got <= 0) return;
             int k = 0;
             while (k + 1 < got && !(applet_names[k] == 0 && applet_names[k + 1] == 0)) k++;
@@ -2187,14 +2185,14 @@ int linux_command(const char *line, int background) {
     if (memcmp(line, "strace ", 7) != 0) return 0;
     const char *c = line + 7;
     while (*c == ' ') c++;
-    char name[MYFS_NAME_MAX + 1];
+    char name[MYFS_PATH_MAX];
     int n = 0;
-    while (*c && *c != ' ' && n < MYFS_NAME_MAX) name[n++] = *c++;
+    while (*c && *c != ' ' && n < MYFS_PATH_MAX - 1) name[n++] = *c++;
     name[n] = 0;
     while (*c == ' ') c++;
     trace_next = 1;
     if (linux_is_elf(name)) linux_run(name, name, c, background);
-    else if (linux_applet(name)) linux_run("busybox", name, c, background);
+    else if (linux_applet(name)) linux_run("/busybox", name, c, background);
     else console_puts("strace: only Linux programs can be traced.\n");
     trace_next = 0;
     return 1;
@@ -2282,7 +2280,7 @@ static int64_t sys_clone(proc_t *p, trapframe_t *f, uint64_t flags, uint64_t sta
 
 static int64_t sys_execve(proc_t *p, trapframe_t *f, uint64_t upath, uint64_t uargv, uint64_t uenvp) {
     lx_t *x = LX(p);
-    char path[256], file[MYFS_NAME_MAX + 1];
+    char path[256], file[MYFS_PATH_MAX];
     int n = ustr(p, upath, path, sizeof path);
     if (n < 0) return n;
     int fdno;
@@ -2528,23 +2526,6 @@ static int64_t sys_rt_sigprocmask(proc_t *p, int how, uint64_t set, uint64_t old
     return 0;
 }
 
-// rename on a flat file system without rename: copy, then delete
-static int64_t do_rename(const char *from, const char *to) {
-    int32_t size = myfs_size(from);
-    if (size < 0) return -ENOENT;
-    if (!strcmp(from, to)) return 0;
-    int nb = (int)(((uint64_t)size + BLOCK - 1) / BLOCK);
-    if (nb < 1) nb = 1;
-    uint64_t m = proc_mem_alloc(nb);
-    if (!m) return -ENOMEM;
-    int r = 0;
-    if (myfs_read(from, 0, (void *)m, (uint32_t)size) != size) r = -EIO;
-    else if (myfs_write(to, (void *)m, (uint32_t)size)) r = -ENOSPC;
-    else if (myfs_remove(from)) r = -EIO;
-    proc_mem_free(m, nb);
-    return r;
-}
-
 static int64_t sys_sendfile(proc_t *p, file_t *out, file_t *in, uint64_t uoff, uint64_t count) {
     // through a bounce buffer on the program's stack is not possible: use a kernel one
     static uint8_t bounce[4096];
@@ -2644,7 +2625,7 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
                         uint64_t a3, uint64_t a4, uint64_t a5, int *known) {
     lx_t *x = LX(p);
     file_t *fl;
-    char name[MYFS_NAME_MAX + 1], name2[MYFS_NAME_MAX + 1];
+    char name[MYFS_PATH_MAX], name2[MYFS_PATH_MAX];
     int fdno, kind;
     kstat_t st;
     switch (n) {
@@ -2717,20 +2698,28 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
         case 35:                                    // unlinkat(dirfd, path, flags)
             kind = upath(p, a1, name, &fdno);
             if (kind < 0) return kind;
-            if (kind == R_ROOT) return a2 & AT_REMOVEDIR ? -EBUSY : -EISDIR;
+            if (kind == R_DIR) {
+                if (!(a2 & AT_REMOVEDIR)) return -EISDIR;
+                if (!strcmp(name, "/")) return -EBUSY;
+                return (kind = myfs_rmdir(name)) ? fs_err(kind) : 0;
+            }
             if (kind != R_FILE) return -EPERM;
-            if (a2 & AT_REMOVEDIR) return -ENOTDIR;
-            return myfs_remove(name) ? -ENOENT : 0;
+            if (a2 & AT_REMOVEDIR) return myfs_size(name) < 0 ? -ENOENT : -ENOTDIR;
+            return (kind = myfs_remove(name)) ? fs_err(kind) : 0;
         case 38: case 276:                          // renameat, renameat2(olddir, old, newdir, new)
             if ((kind = upath(p, a1, name, &fdno)) < 0) return kind;
-            if (kind != R_FILE) return -EPERM;
+            if (kind != R_FILE && kind != R_DIR) return -EPERM;
             if ((kind = upath(p, a3, name2, &fdno)) < 0) return kind;
-            if (kind != R_FILE) return -EPERM;
-            return do_rename(name, name2);
-        case 34:                                    // mkdirat: MyFS has no folders (yet)
+            if (kind != R_FILE && kind != R_DIR) return -EPERM;
+            if (!strcmp(name, name2)) return 0;
+            if (myfs_stat(name2, 0) == MYFS_FILE && myfs_stat(name, 0) == MYFS_FILE) myfs_remove(name2);
+            return (kind = myfs_rename(name, name2)) ? fs_err(kind) : 0;
+        case 34:                                    // mkdirat(dirfd, path, mode)
             kind = upath(p, a1, name, &fdno);
             if (kind < 0) return kind;
-            return kind == R_FILE && myfs_size(name) < 0 ? -EPERM : -EEXIST;
+            if (kind != R_FILE) return -EEXIST;
+            if (myfs_size(name) >= 0) return -EEXIST;
+            return (kind = myfs_mkdir(name)) ? fs_err(kind) : 0;
         case 37: case 36:                           // linkat, symlinkat
             return -EPERM;
         case 43:                                    // statfs(path, buf)
@@ -2739,7 +2728,7 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
             return sys_statfs(p, kind, a1);
         case 44:                                    // fstatfs(fd, buf)
             if (!(fl = fget(x, (int64_t)a0))) return -EBADF;
-            return sys_statfs(p, fl->type == FT_PROC || fl->type == FT_PROCDIR ? R_PROCDIR : R_ROOT, a1);
+            return sys_statfs(p, fl->type == FT_PROC || fl->type == FT_PROCDIR ? R_PROCDIR : R_DIR, a1);
         case 78: {                                  // readlinkat(dirfd, path, buf, size)
             kind = upath(p, a1, name, &fdno);
             char path[256];
@@ -2754,37 +2743,36 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
                 return k;
             }
             if (strcmp(path, "/proc/self/exe")) return kind < 0 ? kind : -EINVAL;
-            uint64_t len = strlen(x->exe) + 1;
+            uint64_t len = strlen(x->exe);
             if (len > a3) len = a3;
             if (!uok(p, a2, len)) return -EFAULT;
-            ((char *)a2)[0] = '/';
-            memcpy((char *)a2 + 1, x->exe, len - 1);
+            memcpy((char *)a2, x->exe, len);
             return (int64_t)len;
         }
         case 17: {                                  // getcwd
-            uint64_t len = strlen(x->cwd) + 2;
+            const char *cwd = proc_cwd();
+            uint64_t len = strlen(cwd) + 1;
             if (a1 < len) return -ERANGE;
             if (!uok(p, a0, len)) return -EFAULT;
-            ((char *)a0)[0] = '/';
-            memcpy((char *)a0 + 1, x->cwd, len - 1);
+            memcpy((void *)a0, cwd, len);
             return (int64_t)len;
         }
-        case 49:                                    // chdir: "/", "/proc" or "/proc/PID"
+        case 49:                                    // chdir: a MyFS folder, /proc or /proc/PID
             kind = upath(p, a0, name, &fdno);
             if (kind < 0) return kind;
-            if (kind == R_ROOT) {
-                x->cwd[0] = 0;
+            if (kind == R_DIR) {
+                strcpy(p->cwd, name);
                 return 0;
             }
             if (kind == R_PROCDIR) {
-                set_cwd_proc(x, fdno);
+                set_cwd_proc(p, fdno);
                 return 0;
             }
             return kind == R_FILE && myfs_size(name) < 0 ? -ENOENT : -ENOTDIR;
         case 50:                                    // fchdir
             if (!(fl = fget(x, (int64_t)a0))) return -EBADF;
-            if (fl->type == FT_DIR) x->cwd[0] = 0;
-            else if (fl->type == FT_PROCDIR) set_cwd_proc(x, fl->pid);
+            if (fl->type == FT_DIR) strcpy(p->cwd, fl->name);
+            else if (fl->type == FT_PROCDIR) set_cwd_proc(p, fl->pid);
             else return -ENOTDIR;
             return 0;
         case 23:                                    // dup

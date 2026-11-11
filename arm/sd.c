@@ -4,6 +4,8 @@
 // controller design) by polling, one 512-byte sector at a time.
 // The card's pins (GPIO 48-53) are switched over to this controller;
 // the Wi-Fi chip, which normally uses it, is disconnected.
+// This is now the fallback: sd_init tries the SDHOST controller first
+// (sdhost.c), which leaves EMMC free for Wi-Fi.
 #include <stdint.h>
 #include "broadcom/vcmailbox.h"
 #include "sd.h"
@@ -167,9 +169,8 @@ static void setup_pins(void) {
     GPPUDCLK1 = 0;
 }
 
-static uint64_t capacity_from_csd(void) {
-    // the controller drops the CRC byte: CSD bits [127:8] sit in RESP3..RESP0
-    uint32_t r0 = EMMC_RESP0, r1 = EMMC_RESP1, r2 = EMMC_RESP2, r3 = EMMC_RESP3;
+// r0..r3 = CSD bits [127:8] (the way SDHCI hands them over, without the CRC byte)
+uint64_t sd_capacity_from_csd(uint32_t r0, uint32_t r1, uint32_t r2, uint32_t r3) {
     uint32_t structure = (r3 >> 22) & 3;
     if (structure == 1) {                           // CSD v2 (SDHC/SDXC)
         uint32_t c_size = ((r1 >> 8) & 0xFFFFFF) & 0x3FFFFF;
@@ -182,11 +183,8 @@ static uint64_t capacity_from_csd(void) {
     return ((uint64_t)(c_size + 1) << (c_size_mult + 2)) << read_bl_len >> 9;
 }
 
-int sd_init(void) {
+static int emmc_init(void) {
     ready = 0;
-#ifdef PI4
-    return -100;        // the Pi 4 has a different controller (EMMC2): not supported yet
-#endif
     setup_pins();
 
     base_clock = vcmailbox_get_clock_rate_measured(VCMAILBOX_CLOCK_EMMC);
@@ -233,7 +231,7 @@ int sd_init(void) {
     }
     rca = EMMC_RESP0 >> 16;
     if (command(CMD_SEND_CSD, rca << 16) == 0) {
-        card_sectors = capacity_from_csd();
+        card_sectors = sd_capacity_from_csd(EMMC_RESP0, EMMC_RESP1, EMMC_RESP2, EMMC_RESP3);
     }
     if (set_clock(25000000)) {                      // normal speed: 25 MHz
         return -6;
@@ -248,7 +246,7 @@ int sd_init(void) {
     return 0;
 }
 
-int sd_read(uint32_t lba, void *buf) {
+static int emmc_read(uint32_t lba, void *buf) {
     if (!ready) {
         return -1;
     }
@@ -266,7 +264,7 @@ int sd_read(uint32_t lba, void *buf) {
     return wait_interrupt(INT_DATA_DONE);
 }
 
-int sd_write(uint32_t lba, const void *buf) {
+static int emmc_write(uint32_t lba, const void *buf) {
     if (!ready) {
         return -1;
     }
@@ -284,7 +282,25 @@ int sd_write(uint32_t lba, const void *buf) {
     return wait_interrupt(INT_DATA_DONE);
 }
 
-int sd_ready(void) { return ready; }
-int sd_is_high_capacity(void) { return high_capacity; }
-uint64_t sd_sectors(void) { return card_sectors; }
-uint32_t sd_base_clock(void) { return base_clock; }
+// ---- the card on whichever controller worked ----
+static int on_sdhost;
+
+int sd_init(void) {
+#ifdef PI4
+    return -100;        // the Pi 4 has a different controller (EMMC2): not supported yet
+#endif
+    if (sdhost_init() == 0) {
+        on_sdhost = 1;
+        return 0;
+    }
+    on_sdhost = 0;
+    return emmc_init();     // the old way (takes the Wi-Fi chip's controller)
+}
+
+int sd_read(uint32_t lba, void *buf) { return on_sdhost ? sdhost_read(lba, buf) : emmc_read(lba, buf); }
+int sd_write(uint32_t lba, const void *buf) { return on_sdhost ? sdhost_write(lba, buf) : emmc_write(lba, buf); }
+int sd_ready(void) { return on_sdhost || ready; }
+int sd_is_high_capacity(void) { return on_sdhost ? sdhost_is_high_capacity() : high_capacity; }
+uint64_t sd_sectors(void) { return on_sdhost ? sdhost_sectors() : card_sectors; }
+uint32_t sd_base_clock(void) { return on_sdhost ? sdhost_clock() : base_clock; }
+const char *sd_controller(void) { return on_sdhost ? "SDHOST" : "EMMC"; }

@@ -5,8 +5,9 @@ for testing MyOS-ARM in QEMU:
   sector 0       MBR with one FAT32 partition ("bootfs")
   sector 2048..  FAT32 file system holding MYFS.IMG (one unbroken run of clusters)
 
-usage: python tools/mksdimg.py <out.img> [file ...]
-The files are put inside MYFS.IMG. Prints the sector range of MYFS.IMG.
+usage: python tools/mksdimg.py [--v1] <out.img> [file ...]
+The files are put inside MYFS.IMG (MyFS v2, or v1 with --v1). Prints the
+sector range of MYFS.IMG.
 """
 import os
 import struct
@@ -23,9 +24,10 @@ RESERVED = 32
 MYFS_MB = 8
 
 
-def build(out_path, files=(), kernel=None):
-    """returns {"myfs": (first sector, sectors), "kernel": (first sector, sectors) or None}"""
-    total = CARD_MB * 1024 * 1024 // SECTOR
+def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_MB, myfs_mb=MYFS_MB):
+    """returns {"myfs": (first sector, sectors), "kernel": (first sector, sectors) or None}
+    version: MyFS format of MYFS.IMG; setup(fs): called to add more (folders...)"""
+    total = card_mb * 1024 * 1024 // SECTOR
     part_sectors = total - PART_START
     # FAT32 with one sector per cluster
     clusters = part_sectors - RESERVED
@@ -35,11 +37,14 @@ def build(out_path, files=(), kernel=None):
 
     # MYFS.IMG contents: a MyFS image made with tools/myfs.py
     tmp = os.path.join(tempfile.mkdtemp(), "myfs.img")
-    myfs.create(tmp, MYFS_MB)
+    myfs.create(tmp, myfs_mb, version)
     disk = myfs.Disk(tmp)
+    fs = myfs.open_fs(disk)
     for f in files:
-        myfs.cmd_put(disk, f)
-    disk.f.close()
+        fs.write("/" + os.path.basename(f), open(f, "rb").read())
+    if setup:
+        setup(fs)
+    disk.close()
     content = open(tmp, "rb").read()
     file_clusters = len(content) // SECTOR
     # MYOS8.IMG (optional): the kernel padded to 1 MB, right after MYFS.IMG
@@ -133,7 +138,8 @@ def read_myfs(card_path, myfs_lba, sectors, out_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    args = [a for a in sys.argv[1:] if a != "--v1"]
+    if not args:
         sys.exit(__doc__)
-    lba, n = build(sys.argv[1], sys.argv[2:])["myfs"]
+    lba, n = build(args[0], args[1:], version=1 if "--v1" in sys.argv else 2)["myfs"]
     print(f"{sys.argv[1]}: MYFS.IMG at sectors {lba}-{lba + n - 1}")

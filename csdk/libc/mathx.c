@@ -14,3 +14,5 @@ double fmax(double a, double b) { return a > b ? a : b; }
 float floorf(float x) { return (float)floor(x); }
 float sqrtf(float x) { return (float)sqrt(x); }
 long lround(double x) { return (long)round(x); }
+long lrint(double x) { return (long)rint(x); }
+long long llrint(double x) { return (long long)rint(x); }
