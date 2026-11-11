@@ -15,6 +15,29 @@
 
 static char heap[MICROPY_HEAP_SIZE];
 
+// exit() and quit() as in desktop Python; typing just "exit" says how to leave
+static const char startup_code[] =
+    "class _Exit:\n"
+    "    def __repr__(self):\n"
+    "        return 'Use exit() or quit() to leave Python'\n"
+    "    def __call__(self, code=0):\n"
+    "        import sys\n"
+    "        sys.exit(code)\n"
+    "exit = quit = _Exit()\n"
+    "del _Exit\n";
+
+static void run_startup_code(void) {
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        mp_lexer_t *lex = mp_lexer_new_from_str_len(MP_QSTR__lt_stdin_gt_, startup_code,
+                                                    sizeof startup_code - 1, 0);
+        qstr source = lex->source_name;
+        mp_parse_tree_t tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
+        mp_call_function_0(mp_compile(&tree, source, false));
+        nlr_pop();
+    }
+}
+
 // copy the next space-separated word of *args into word[48]; false at the end
 static bool next_word(const char **args, char *word) {
     const char *p = *args;
@@ -63,13 +86,14 @@ int main(const char *args) {
     mp_stack_set_limit(256 * 1024);
     gc_init(heap, heap + sizeof(heap));
     mp_init();
+    run_startup_code();
 
     int status = 0;
     if (*args) {
         status = run_script(args);
     } else {
         sys_print("Tips: end an indented block with Backspace then Enter.\n");
-        sys_print("      Leave with: import sys; sys.exit()\n");
+        sys_print("      Leave with: exit()\n");
         pyexec_friendly_repl();
     }
     mp_deinit();

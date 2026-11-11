@@ -73,7 +73,8 @@ PROGRAMS += [
     ("python float",      "7 / 2",                ["3.5"]),
     ("python bigint",     "2 ** 100",             ["1267650600228229401496703205376"]),
     ("python files",      "import os; sorted(os.listdir())[:2]", ["calc.pkg"]),
-    ("python leaves",     "import sys; sys.exit()", ["myos> "], 2),
+    ("python exit hint",  "exit",                 ["Use exit() or quit() to leave Python"]),
+    ("python leaves",     "exit()",               ["myos> "], 2),
 ]
 
 SD_AFTER_REBOOT = [
