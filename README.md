@@ -117,6 +117,7 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 |---|---|---|
 | `lua` | Lua 5.4.7 ตัวจริง (port จาก C) | `lua`, `lua -e "print(2^10)"`, `lua game.lua` |
 | `node` | JavaScript (QuickJS 2026-06-04 ตัวจริง สั่งแบบ Node.js) | `node`, `node -e "console.log(2**10)"`, `node app.js` |
+| `java` | Java (JVM ที่เขียนเอง รันไฟล์ `.class`/`.jar` จาก `javac` บน PC) | `java Hello`, `java -jar app.jar` |
 | `python` | MicroPython (Python 3) | `python`, `python hello.py` |
 | `basic` | BASIC แบบมีเลขบรรทัด | `10 PRINT "HI"` แล้ว `RUN`, `SAVE "a.bas"`, `basic a.bas` |
 | `scheme` | Scheme (Lisp) | `(define (sq x) (* x x))` |
@@ -130,6 +131,26 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 - มี `console.log/error/table/time`, `print`, `prompt("ชื่อ? ")` (อ่านบรรทัดจากคีย์บอร์ด), `setTimeout/setInterval`, `process.argv/exit/env`, `require('fs')` (`readFileSync`, `writeFileSync`, `readdirSync`, `existsSync`, `unlinkSync` ...), `path`, `os`, `util`, `events`, `readline`, `assert`, `require('./mylib')` และ `import ... from 'fs'`
 - ไม่มี: เครือข่าย (`http`), `child_process`, `Buffer` (ใช้ `Uint8Array` แทน), โมดูล `std`/`os` ของ qjs (ต้องใช้ Unix), Intl/Temporal; เรียกฟังก์ชันซ้อนลึกได้ราว 3,300 ชั้น
 - โปรแกรมใหญ่ 726 KB (ใหญ่สุดที่ MyOS รับได้คือ 1 MB)
+
+**Java** (`pkg install java`): JVM ที่เขียนเองทั้งตัว (ไม่ได้ใช้ OpenJDK) รันไฟล์ `.class` และ `.jar` ที่คอมไพล์ด้วย `javac` บน PC (บน MyOS ยังไม่มี javac)
+1. เขียน `Hello.java` บน PC
+```java
+public class Hello {
+    public static void main(String[] args) {
+        System.out.println("สวัสดี MyOS!");
+    }
+}
+```
+2. คอมไพล์บน PC: `javac --release 8 Hello.java` ได้ไฟล์ `Hello.class` (JDK 9-25 คอมไพล์แบบปกติโดยไม่ใส่ `--release` ก็รันได้)
+3. ส่งไป Pi: `arm\push-pi.ps1 Hello.class` (ถ้ามี inner class/คลาสอื่นด้วย ส่ง `.class` ทุกไฟล์ที่ javac สร้าง หรือรวมเป็น jar: `jar cfe app.jar Hello *.class`)
+4. บน Pi: `pkg install java` แล้ว `java Hello`
+
+คำสั่ง: `java Hello a b` (args เข้า `String[] args`), `java Hello.class`, `java -cp lib Hello`, `java -cp app.jar pkg.Main`, `java -jar app.jar` (อ่าน `Main-Class` จาก manifest), `java -version`, `-Xmx12m` (ขนาด heap), `-verbose:gc`, `-Dชื่อ=ค่า`; `System.exit(n)` เป็น exit code ของโปรแกรม, exception ที่ไม่มีใคร catch พิมพ์ stack trace แล้วจบด้วย code 1
+- **ภาษา:** ครบทุกอย่างที่ javac 8-25 สร้าง: class/interface/abstract, inner/anonymous/local class, enum, generics, varargs, autoboxing, exception + try/catch/finally/try-with-resources + stack trace (`at Hello.main(Hello.java:5)`), lambda, method reference, record, switch แบบใหม่ + pattern matching, text block, `var`, `void main()` ของ Java 25
+- **ไลบรารี (เขียนเองใน `ports\java\lib`):** `java.lang` (String, StringBuilder, Math, Integer/Long/Double/Character/Boolean, System, Thread, Enum, Record ...), `java.util` (ArrayList, LinkedList, HashMap/HashSet (ลำดับตอนวนลูปเหมือน Java บน PC), LinkedHashMap, TreeMap/TreeSet, ArrayDeque, PriorityQueue, Stack, Collections, Arrays, Objects, Optional, Scanner, Random (seed เดียวกันได้เลขชุดเดียวกับ PC), StringJoiner, EnumMap/EnumSet, BitSet ...), stream API (`stream().filter().map().collect(...)`, IntStream, Collectors), regex (`split`, `matches`, `replaceAll`, Pattern/Matcher), `String.format`/`printf`, `java.math` (BigInteger, BigDecimal), ไฟล์บน MyFS (`FileReader`, `BufferedReader`, `FileWriter`, `PrintWriter`, `Scanner(new File(...))`, `java.nio.file.Files.readAllLines/writeString`), AtomicInteger/ConcurrentHashMap
+- **ไม่มี:** thread จริง (`Thread.start()` รัน `run()` จนจบก่อนแล้วค่อยกลับมา, `wait()` แจ้ง error), GUI (AWT/Swing), เครือข่าย, reflection (`getMethods()`, `Field`), `java.time`, serialization ถ้าโปรแกรมใช้คลาสที่ไม่มี จะขึ้น `java.lang.NoClassDefFoundError: java.awt.Point (not in MyOS Java's runtime library)` แทนการค้าง
+- heap 16 MB (array ใหญ่ ≥ 64 KB ใช้หน่วยความจำที่เหลือของโปรแกรมได้อีก), เรียกฟังก์ชันซ้อนได้ราว 12,000 ชั้น, เป็น interpreter (ไม่มี JIT) จึงช้ากว่า Java บน PC มาก, `java Hello.java` (รันซอร์สตรง ๆ) ยังไม่ได้เพราะไม่มี javac, โปรแกรมใหญ่ 600 KB
+- build: `arm\build.ps1` คอมไพล์ไลบรารีด้วย `javac` ของ PC (ถ้าไม่มี JDK จะข้าม `java` ไป), ทดสอบ: `python tests\qemu_langs.py java` (เทียบผลกับ `java` บน PC)
 
 **SQLite** (`pkg install sqlite3`): SQLite 3.54.1 ตัวจริง ไฟล์ฐานข้อมูลเก็บบน MyFS
 ```
@@ -301,6 +322,7 @@ myos\
 ├── files\                 ไฟล์ที่ส่งเข้าดิสก์ (ตัวอย่าง .py)
 ├── csdk\                  SDK ภาษา C สำหรับโปรแกรมบน MyOS
 ├── python\                MicroPython port สำหรับ MyOS
+├── ports\                 โปรแกรม C ที่ port มา (lua, node, sqlite3) และ java (JVM ที่เขียนเอง)
 ├── tools\                 myfs.py, mkpkg.py, get-deps.ps1
 ├── arm\                   MyOS Pi: kernel C, driver, USB, สคริปต์ลง Pi
 ├── tests\                 ทดสอบอัตโนมัติใน QEMU
