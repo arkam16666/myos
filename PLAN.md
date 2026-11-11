@@ -19,6 +19,7 @@
 | โปรแกรมภาษา C | ✅ | ✅ (โค้ดชุดเดียวกัน) |
 | Python (MicroPython) | ✅ | ✅ |
 | หน้า panic | ✅ | ✅ |
+| รันโปรแกรม Linux (ELF static ARM64) | — | ✅ BusyBox (`pkg install busybox`) |
 
 ## สิ่งที่ยังขาด
 
@@ -122,6 +123,7 @@
 | 4.3 | Network: driver + IP + `ping` → TCP → ดาวน์โหลดแพ็กเกจ | ใหญ่มาก | บน Pi Zero 2 W ทำเป็น USB network ได้ เพราะมี TinyUSB แล้ว |
 | 4.4 | HDMI + คีย์บอร์ด USB บน Pi | ใหญ่ | ให้ Pi ใช้งานได้โดยไม่ต้องต่อคอม |
 | 4.5 | บูต x86 บนเครื่องจริงผ่าน UEFI | กลาง | |
+| 4.6 | รันโปรแกรม Linux (เป้าหมาย: แอปจาก `apt`) | ใหญ่มาก | ✅ ขั้นแรก: โปรแกรม static เช่น BusyBox |
 
 ตอนนี้ทำเฉพาะ ARM (Pi) ก่อน ส่วน 4.1 และ 4.5 ของ x86 พักไว้ ลำดับ: 4.3 → 4.4 → 4.2
 
@@ -142,6 +144,21 @@
 - [x] **4.2.4** หน้าจอแยกต่อ session: terminal (tty) ต่อช่องทาง, shell เป็น kernel thread, SSH พร้อมกัน 3 session
   - เสร็จเมื่อ: SSH 2 หน้าต่างพร้อมกันเห็นแค่ของตัวเอง ✅ (ทดสอบบน Pi จริง)
 - [ ] **4.2.5** แบ่งจอแบบ tmux ในหน้าต่างเดียว
+
+### 4.6 โปรแกรม Linux บน Pi (เป้าหมาย: แอปจาก apt)
+แอปใน `.deb` คือโปรแกรม Linux จึงให้ MyOS รันไฟล์ ELF ของ Linux ได้โดยจำลอง system call ของ Linux (`arm\linux.c`)
+- [x] **4.6.1** ตัวโหลด ELF64 (ET_EXEC และ static PIE), stack เริ่มต้นแบบ Linux (argc/argv/envp/auxv), แผนผังหน่วยความจำแบบ Linux (โปรแกรม + brk ที่ 0x400000, mmap + stack ใน GB ที่สอง), เก็บ TPIDR_EL0 ต่อโปรเซส
+- [x] **4.6.2** system call ของ Linux ราว 110 ตัว: ไฟล์บน MyFS, mmap/brk, เวลา, uname, getrandom ... ตัวที่ไม่มีตอบ -ENOSYS, `strace PROG` แสดงทุก system call
+- [x] **4.6.3** fork/vfork/execve/wait4, pipe, signal handler จริง (signal frame + rt_sigreturn), termios, ppoll
+  - เสร็จเมื่อ: `busybox sh` ใช้ pipe, redirect, `$(...)`, `trap`, Ctrl+C ได้ และ `vi` แก้ไฟล์ได้ ✅
+- [x] **4.6.4** `/proc` จำลอง (meminfo, stat, uptime, PID/stat ...) และ statfs: `ps`, `top`, `free`, `df` ใช้ได้
+- [x] **4.6.5** แพ็กเกจชนิด linux (`pkg.c`, `mkpkg.py`, `repo.py`), BusyBox 1.36.1 จาก Alpine (`get-deps.ps1` ตรวจ SHA-256), พิมพ์ชื่อคำสั่งของ BusyBox ได้เลย (`vi` = `busybox vi`)
+  - เสร็จเมื่อ: `pkg install busybox` แล้วใช้คำสั่งแบบ Ubuntu ได้ ✅ (tests/qemu_linux.py 28 ข้อ ใน QEMU)
+- [ ] **4.6.6** ทดสอบบน Pi จริง (build แบบ USB, ผ่าน SSH/telnet)
+- [ ] **4.6.7** ตัวแปลง `.deb` → แพ็กเกจ MyOS (แตก `data.tar` เลือกไฟล์ ELF static) เช่น `tools\deb2pkg.py`
+- [ ] **4.6.8** โปรแกรม dynamic (ส่วนใหญ่ใน apt): โหลด `ld-linux-aarch64.so.1` + glibc `.so` ต้องมี mmap ไฟล์จริงแบบแชร์หน้า, MyFS v2 ที่มีโฟลเดอร์ `/lib`, `/usr/lib`, `/etc`
+- [ ] **4.6.9** thread (clone แบบ CLONE_VM/CLONE_THREAD, futex จริง) สำหรับโปรแกรมที่ใช้ pthread
+- [ ] **4.6.10** socket สำหรับโปรแกรม Linux (ผ่าน lwIP) เช่น `wget`, `nc`
 
 ---
 

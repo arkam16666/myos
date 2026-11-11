@@ -151,6 +151,23 @@ Ctrl+C                หยุดโปรแกรมที่อยู่ข�
 - `ps` เห็นทุกโปรแกรมของทุก session (คอลัมน์ TTY: serial / telnet / ssh1-3, `*` = session นี้)
 - ปิดหน้าต่าง SSH หรือ `exit` แล้ว shell และโปรแกรมทั้งหมดของ session นั้นถูกปิดตาม
 
+**รันโปรแกรม Linux (BusyBox):** MyOS Pi รันโปรแกรม Linux ที่เป็นไฟล์ ELF แบบ static สำหรับ ARM64 (AArch64) ได้ โดยจำลอง system call ของ Linux (`arm\linux.c`) ตัวแรกที่ใช้ได้คือ BusyBox ซึ่งรวมคำสั่งแบบ Ubuntu กว่า 300 คำสั่งไว้ในไฟล์เดียว
+```
+pkg install busybox          ติดตั้ง (หรือ push-pi.ps1 -Packages แล้ว pkg install busybox)
+vi note.txt                  พิมพ์ชื่อคำสั่งของ BusyBox ได้เลย = busybox vi note.txt
+grep -n main prog.c          grep, sed, awk, sort, uniq, head, tail, wc, md5sum, find, tar ...
+sh                           shell แบบ Linux (ash): pipe |, > ไฟล์, $(...), for/while, Ctrl+C
+sh -c 'ls | wc -l'           รันคำสั่ง shell บรรทัดเดียวจาก shell ของ MyOS
+busybox ls -l                คำสั่งที่ชื่อซ้ำกับคำสั่งของ MyOS (ls, cat, echo, rm, ps, kill ...) ต้องนำหน้าด้วย busybox
+top / free / df / busybox ps ดูโปรเซส หน่วยความจำ ดิสก์ (อ่านจาก /proc ที่ MyOS จำลองให้)
+strace PROG ...              รันโปรแกรม Linux แล้วแสดง system call ทุกตัว (ไว้หาว่าขาดอะไร)
+```
+- ไฟล์ BusyBox มาจากแพ็กเกจ `busybox-static` ของ Alpine Linux: `tools\get-deps.ps1` ดาวน์โหลดและตรวจ SHA-256 ให้ แล้ว `arm\build.ps1` ทำเป็น `busybox.pkg` (แพ็กเกจชนิดใหม่ "linux") ไฟล์ ELF อื่นทำแพ็กเกจได้ด้วย `python tools\mkpkg.py โปรแกรม ไฟล์.info ชื่อ.pkg`
+- MyFS ยังไม่มีโฟลเดอร์ โปรแกรม Linux จึงเห็น `/` เป็นโฟลเดอร์เดียว: `/bin/ls`, `/tmp/x`, `./x` หมายถึงไฟล์ `ls`, `x` ใน MyFS, `/dev/null`, `/dev/tty`, `/proc` มีให้
+- ไฟล์ที่โปรแกรมเปิดเขียนจะอยู่ใน RAM ก่อน แล้วบันทึกลง MyFS ตอนปิดไฟล์ (สูงสุด 32 MB ต่อไฟล์)
+- ข้อจำกัด: รันได้เฉพาะโปรแกรม static (ไฟล์จาก `apt` ส่วนใหญ่เป็น dynamic ใช้ glibc + ไลบรารี `.so` ยังรันไม่ได้), ไม่มี thread, ไม่มี socket/network สำหรับโปรแกรม Linux, ผู้ใช้เป็น root (uid 0) คนเดียว, นาฬิกาเริ่มที่ปี 1970 (ตั้งด้วย `date -s` ได้)
+- ทดสอบใน QEMU: `python tests\qemu_linux.py` (ตัวโหลด ELF, system call ด้วย `tests\linux\lxtest.c`, BusyBox, sh, vi, signal, /proc)
+
 **ส่งไฟล์เข้า Pi ผ่าน USB** (แพ็กเกจ, ไฟล์ `.py` ฯลฯ):
 ```powershell
 powershell -ExecutionPolicy Bypass -File arm\push-pi.ps1 -Packages            # แพ็กเกจทั้งหมดสำหรับ Pi
@@ -218,3 +235,4 @@ myos\
 | [TinyUSB](https://github.com/hathach/tinyusb) | USB serial บน MyOS Pi | MIT |
 | [broadcom-peripherals](https://github.com/adafruit/broadcom-peripherals) | โค้ดบูต, MMU, interrupt ของ Pi | MIT |
 | Raspberry Pi firmware | ไฟล์บูตของ Pi | Broadcom (แจกจ่ายได้) |
+| [BusyBox](https://busybox.net/) (`busybox-static` จาก Alpine Linux) | คำสั่งแบบ Linux บน MyOS Pi | GPL-2.0 |

@@ -24,6 +24,11 @@ python tests\qemu_langs.py
 $langs = $LASTEXITCODE
 python tests\qemu_multi.py
 $multi = $LASTEXITCODE
+$linux = 0
+if (Test-Path "$root\arm\build\packages\busybox.pkg") {
+    python tests\qemu_linux.py
+    $linux = $LASTEXITCODE
+} else { Write-Host "skipping qemu_linux.py (no BusyBox: run tools\get-deps.ps1)" }
 
-if ($x86 -or $arm -or $apps -or $langs -or $multi) { Write-Host "SOME TESTS FAILED" -ForegroundColor Red; exit 1 }
+if ($x86 -or $arm -or $apps -or $langs -or $multi -or $linux) { Write-Host "SOME TESTS FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "ALL TESTS PASSED" -ForegroundColor Green
