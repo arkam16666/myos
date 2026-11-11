@@ -1,7 +1,9 @@
-// tls.c - a small TLS 1.3 client (RFC 8446), enough to download over HTTPS.
+// tls.c - a small TLS client, enough to download over HTTPS.
 //
-// One cipher suite: TLS_CHACHA20_POLY1305_SHA256, key exchange X25519
-// (both from Monocypher, like the SSH server). One connection at a time.
+// TLS 1.3 (RFC 8446) with TLS_CHACHA20_POLY1305_SHA256, and TLS 1.2 (RFC 5246)
+// with ECDHE-RSA/ECDSA-CHACHA20-POLY1305 (RFC 7905) for servers that don't
+// speak 1.3 yet (npm, micropython.org). Key exchange X25519 in both. All the
+// cryptography is Monocypher's, like the SSH server's. One connection at a time.
 //
 // The server's certificate is NOT checked: MyOS has no RSA/ECDSA code or
 // root certificates. That's fine for 'pkg' because what matters is signed:
@@ -18,7 +20,12 @@
 #define REC_MAX (16384 + 256)               // biggest record body (ciphertext)
 enum { CT_CCS = 20, CT_ALERT = 21, CT_HANDSHAKE = 22, CT_APP = 23 };
 enum { HS_CLIENT_HELLO = 1, HS_SERVER_HELLO = 2, HS_ENCRYPTED_EXT = 8, HS_CERTIFICATE = 11,
-       HS_CERT_REQUEST = 13, HS_CERT_VERIFY = 15, HS_FINISHED = 20 };
+       HS_SERVER_KEY_EXCHANGE = 12, HS_CERT_REQUEST = 13, HS_SERVER_HELLO_DONE = 14,
+       HS_CERT_VERIFY = 15, HS_CLIENT_KEY_EXCHANGE = 16, HS_FINISHED = 20, HS_CERT_STATUS = 22 };
+
+static int tls12;                           // 1 = the server chose TLS 1.2
+static int expect_ccs;                      // TLS 1.2: the server's ChangeCipherSpec turns decryption on
+static uint8_t client_random[32], server_random[32];
 
 static const tls_io_t *io;
 static uint8_t rec[5 + REC_MAX];            // the record being read
@@ -82,6 +89,27 @@ static void traffic_keys(const uint8_t secret[32], uint8_t key[32], uint8_t iv[1
     expand_label(secret, "iv", 0, 0, iv, 12);
 }
 
+// TLS 1.2 PRF (RFC 5246 5): P_SHA256(secret, label + seed) -> n bytes
+static void prf(const uint8_t *secret, size_t slen, const char *label, const uint8_t *seed, size_t seed_len,
+                uint8_t *result, size_t n) {
+    uint8_t ls[96], a[32], buf[32 + 96], t[32];
+    size_t ll = strlen(label), lsn = ll + seed_len;
+    memcpy(ls, label, ll);
+    memcpy(ls + ll, seed, seed_len);
+    hmac(secret, slen, ls, lsn, a);                         // A(1)
+    while (n) {
+        memcpy(buf, a, 32);
+        memcpy(buf + 32, ls, lsn);
+        hmac(secret, slen, buf, 32 + lsn, t);
+        size_t take = n < 32 ? n : 32;
+        memcpy(result, t, take);
+        result += take;
+        n -= take;
+        hmac(secret, slen, a, 32, a);                       // A(i+1)
+    }
+    crypto_wipe(t, sizeof t);
+}
+
 static void finished_mac(const uint8_t secret[32], const uint8_t hash[32], uint8_t mac[32]) {
     uint8_t fk[32];
     expand_label(secret, "finished", 0, 0, fk, 32);
@@ -97,14 +125,36 @@ static void nonce_for(const uint8_t iv[12], uint64_t seq, uint8_t nonce[12]) {
 
 static int send_record(uint8_t type, const uint8_t *data, uint32_t n) {
     if (n > 16384) return TLS_ERR_PROTOCOL;
-    if (!enc_out) {                         // the ClientHello: in the clear
+    if (!enc_out) {                         // the ClientHello (1.2: ClientKeyExchange): in the clear
         out[0] = type;
         out[1] = 3;
-        out[2] = 1;
+        out[2] = tls12 ? 3 : 1;
         out[3] = (uint8_t)(n >> 8);
         out[4] = (uint8_t)n;
         memcpy(out + 5, data, n);
         return io->write(out, 5 + n) < 0 ? TLS_ERR_IO : 0;
+    }
+    uint8_t nonce[12];
+    crypto_aead_ctx ctx;
+    if (tls12) {                            // RFC 7905: real type in the header, no padding,
+        uint8_t aad[13];                    // AAD = seq, type, version, plaintext length
+        for (int i = 0; i < 8; i++) aad[i] = (uint8_t)(c_seq >> (56 - 8 * i));
+        aad[8] = type;
+        aad[9] = 3;
+        aad[10] = 3;
+        aad[11] = (uint8_t)(n >> 8);
+        aad[12] = (uint8_t)n;
+        out[0] = type;
+        out[1] = 3;
+        out[2] = 3;
+        out[3] = (uint8_t)((n + 16) >> 8);
+        out[4] = (uint8_t)(n + 16);
+        memcpy(out + 5, data, n);
+        nonce_for(c_iv, c_seq++, nonce);
+        crypto_aead_init_ietf(&ctx, c_key, nonce);
+        crypto_aead_write(&ctx, out + 5, out + 5 + n, aad, 13, out + 5, n);
+        crypto_wipe(&ctx, sizeof ctx);
+        return io->write(out, 5 + n + 16) < 0 ? TLS_ERR_IO : 0;
     }
     uint32_t len = n + 1 + 16;              // content, its real type, the tag
     out[0] = CT_APP;                        // everything encrypted looks like app data
@@ -114,10 +164,8 @@ static int send_record(uint8_t type, const uint8_t *data, uint32_t n) {
     out[4] = (uint8_t)len;
     memcpy(out + 5, data, n);
     out[5 + n] = type;
-    uint8_t nonce[12];
     nonce_for(c_iv, c_seq++, nonce);
-    crypto_aead_ctx ctx;                    // a fresh context per record = RFC 8439 AEAD
-    crypto_aead_init_ietf(&ctx, c_key, nonce);
+    crypto_aead_init_ietf(&ctx, c_key, nonce);  // a fresh context per record = RFC 8439 AEAD
     crypto_aead_write(&ctx, out + 5, out + 5 + n + 1, out, 5, out + 5, n + 1);
     crypto_wipe(&ctx, sizeof ctx);
     return io->write(out, 5 + len) < 0 ? TLS_ERR_IO : 0;
@@ -129,9 +177,35 @@ static int read_record(uint8_t *type, uint8_t **data, uint32_t *n) {
     uint32_t len = (uint32_t)rec[3] << 8 | rec[4];
     if (len > REC_MAX) return TLS_ERR_PROTOCOL;
     if (len && io->read(rec + 5, len) < 0) return TLS_ERR_IO;
-    if (rec[0] == CT_CCS) {                 // "change cipher spec": compatibility noise
+    if (rec[0] == CT_CCS) {                 // "change cipher spec": 1.3 compatibility noise;
+        if (expect_ccs) {                   // in 1.2 everything after it is encrypted
+            enc_in = 1;
+            s_seq = 0;
+            expect_ccs = 0;
+        }
         *type = CT_CCS;
         *n = 0;
+        return 0;
+    }
+    if (tls12 && enc_in) {
+        if (len < 16) return TLS_ERR_PROTOCOL;
+        uint32_t m = len - 16;
+        uint8_t aad[13], nonce[12];
+        for (int i = 0; i < 8; i++) aad[i] = (uint8_t)(s_seq >> (56 - 8 * i));
+        aad[8] = rec[0];
+        aad[9] = 3;
+        aad[10] = 3;
+        aad[11] = (uint8_t)(m >> 8);
+        aad[12] = (uint8_t)m;
+        nonce_for(s_iv, s_seq++, nonce);
+        crypto_aead_ctx ctx;
+        crypto_aead_init_ietf(&ctx, s_key, nonce);
+        int bad = crypto_aead_read(&ctx, rec + 5, rec + 5 + m, aad, 13, rec + 5, m);
+        crypto_wipe(&ctx, sizeof ctx);
+        if (bad) return TLS_ERR_CIPHER;
+        *type = rec[0];
+        *data = rec + 5;
+        *n = m;
         return 0;
     }
     if (!enc_in || rec[0] != CT_APP) {
@@ -200,13 +274,16 @@ static uint32_t client_hello(uint8_t *b, const char *host, const uint8_t pub[32]
     size_t hl = strlen(host);
     uint8_t *p = b + 4;
     p = put16(p, 0x0303);                   // legacy version "TLS 1.2"
-    rng_bytes(p, 32);                       // random
+    rng_bytes(client_random, 32);           // random
+    memcpy(p, client_random, 32);
     p += 32;
     *p++ = 32;                              // a session id (middlebox compatibility)
     rng_bytes(p, 32);
     p += 32;
-    p = put16(p, 2);
-    p = put16(p, 0x1303);                   // TLS_CHACHA20_POLY1305_SHA256
+    p = put16(p, 6);
+    p = put16(p, 0x1303);                   // TLS 1.3: TLS_CHACHA20_POLY1305_SHA256
+    p = put16(p, 0xCCA9);                   // TLS 1.2: ECDHE-ECDSA-CHACHA20-POLY1305
+    p = put16(p, 0xCCA8);                   //          ECDHE-RSA-CHACHA20-POLY1305
     *p++ = 1;
     *p++ = 0;                               // no compression
     uint8_t *ext = p;
@@ -226,10 +303,18 @@ static uint32_t client_hello(uint8_t *b, const char *host, const uint8_t pub[32]
     p = put16(p, 2 + 2 * (uint32_t)(sizeof sigs / sizeof sigs[0]));
     p = put16(p, 2 * (uint32_t)(sizeof sigs / sizeof sigs[0]));
     for (unsigned i = 0; i < sizeof sigs / sizeof sigs[0]; i++) p = put16(p, sigs[i]);
-    p = put16(p, 0x002B);                   // supported_versions: TLS 1.3
-    p = put16(p, 3);
-    *p++ = 2;
+    p = put16(p, 0x000B);                   // ec_point_formats: uncompressed (TLS 1.2 ECDHE)
+    p = put16(p, 2);
+    *p++ = 1;
+    *p++ = 0;
+    p = put16(p, 0xFF01);                   // renegotiation_info: empty (TLS 1.2 servers want it)
+    p = put16(p, 1);
+    *p++ = 0;
+    p = put16(p, 0x002B);                   // supported_versions: TLS 1.3, 1.2
+    p = put16(p, 5);
+    *p++ = 4;
     p = put16(p, 0x0304);
+    p = put16(p, 0x0303);
     p = put16(p, 0x002D);                   // psk_key_exchange_modes: psk_dhe_ke
     p = put16(p, 2);
     *p++ = 1;
@@ -250,36 +335,125 @@ static uint32_t client_hello(uint8_t *b, const char *host, const uint8_t pub[32]
     return total;
 }
 
-// ServerHello -> the server's X25519 public key; 0 if it isn't what we asked for
+// ServerHello -> 13 (TLS 1.3, server_pub = its X25519 key), 12 (TLS 1.2 with one of
+// our ChaCha20 suites), or 0 if it isn't what we asked for
 static int server_hello(const uint8_t *m, uint32_t n, uint8_t server_pub[32]) {
     static const uint8_t hrr[32] = {        // "HelloRetryRequest" marker random
         0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11, 0xBE, 0x1D, 0x8C, 0x02, 0x1E, 0x65, 0xB8, 0x91,
         0xC2, 0xA2, 0x11, 0x16, 0x7A, 0xBB, 0x8C, 0x5E, 0x07, 0x9E, 0x09, 0xE2, 0xC8, 0xA8, 0x33, 0x9C };
+    static const uint8_t downgrade[8] = { 'D', 'O', 'W', 'N', 'G', 'R', 'D', 1 };
     if (n < 4 + 2 + 32 + 1 || m[0] != HS_SERVER_HELLO) return 0;
     const uint8_t *p = m + 4, *end = m + n;
+    uint32_t legacy = (uint32_t)p[0] << 8 | p[1];
     p += 2;
     if (memcmp(p, hrr, 32) == 0) return 0;
+    memcpy(server_random, p, 32);
     p += 32;
+    if (p + 1 + p[0] > end) return 0;
     p += 1 + p[0];                          // session id echo
-    if (p + 5 > end || p[0] != 0x13 || p[1] != 0x03) return 0;
+    if (p + 3 > end || p[2] != 0) return 0;
+    uint32_t suite = (uint32_t)p[0] << 8 | p[1];
     p += 3;                                 // cipher + compression
-    uint32_t ext_len = (uint32_t)p[0] << 8 | p[1];
-    p += 2;
-    if (p + ext_len > end) return 0;
-    int version_ok = 0, key_ok = 0;
-    const uint8_t *e = p + ext_len;
-    while (p + 4 <= e) {
-        uint32_t type = (uint32_t)p[0] << 8 | p[1], len = (uint32_t)p[2] << 8 | p[3];
-        const uint8_t *d = p + 4;
-        if (d + len > e) return 0;
-        if (type == 0x002B && len == 2 && d[0] == 3 && d[1] == 4) version_ok = 1;
-        if (type == 0x0033 && len == 36 && d[0] == 0x00 && d[1] == 0x1D && d[2] == 0 && d[3] == 32) {
-            memcpy(server_pub, d + 4, 32);
-            key_ok = 1;
+    int v13 = 0, key_ok = 0;
+    if (p + 2 <= end) {                     // (a TLS 1.2 server may send no extensions)
+        uint32_t ext_len = (uint32_t)p[0] << 8 | p[1];
+        p += 2;
+        if (p + ext_len > end) return 0;
+        const uint8_t *e = p + ext_len;
+        while (p + 4 <= e) {
+            uint32_t type = (uint32_t)p[0] << 8 | p[1], len = (uint32_t)p[2] << 8 | p[3];
+            const uint8_t *d = p + 4;
+            if (d + len > e) return 0;
+            if (type == 0x002B && len == 2 && d[0] == 3 && d[1] == 4) v13 = 1;
+            if (type == 0x0033 && len == 36 && d[0] == 0x00 && d[1] == 0x1D && d[2] == 0 && d[3] == 32) {
+                memcpy(server_pub, d + 4, 32);
+                key_ok = 1;
+            }
+            p = d + len;
         }
-        p = d + len;
     }
-    return version_ok && key_ok;
+    if (v13) return suite == 0x1303 && key_ok ? 13 : 0;
+    if (legacy != 0x0303 || (suite != 0xCCA8 && suite != 0xCCA9)) return 0;
+    // a server that speaks 1.3 marks its random when it answers 1.2: someone in
+    // between hid our 1.3 offer (RFC 8446 4.1.3)
+    if (memcmp(server_random + 24, downgrade, 8) == 0) return 0;
+    return 12;
+}
+
+// the rest of a TLS 1.2 handshake (RFC 5246 7.3), after the ServerHello:
+// Certificate, ServerKeyExchange (X25519), ServerHelloDone; we answer with
+// ClientKeyExchange, ChangeCipherSpec, Finished, and check the server's Finished.
+static int handshake12(uint8_t secret[32]) {
+    uint8_t server_pub[32], pub[32], shared[32], master[48], kb[88], h[32];
+    uint8_t *msg;
+    uint32_t len;
+    int r, have_key = 0;
+    tls12 = 1;
+    for (;;) {
+        if ((r = next_handshake(&msg, &len))) return r;
+        uint8_t type = msg[0];
+        if (type == HS_SERVER_KEY_EXCHANGE) {
+            // curve type 3 (named), x25519, 32-byte key, then a signature we don't check
+            if (len < 4 + 4 + 32 || msg[4] != 3 || msg[5] != 0x00 || msg[6] != 0x1D || msg[7] != 32)
+                return TLS_ERR_PROTOCOL;
+            memcpy(server_pub, msg + 8, 32);
+            have_key = 1;
+        } else if (type == HS_SERVER_HELLO_DONE) {
+            consume_handshake(len);
+            break;
+        } else if (type != HS_CERTIFICATE && type != HS_CERT_STATUS) {
+            return TLS_ERR_PROTOCOL;                        // (incl. asking for a client certificate)
+        }
+        consume_handshake(len);
+    }
+    if (!have_key) return TLS_ERR_PROTOCOL;
+    crypto_x25519_public_key(pub, secret);
+    crypto_x25519(shared, secret, server_pub);
+    crypto_wipe(secret, 32);
+    uint8_t any = 0;
+    for (int i = 0; i < 32; i++) any |= shared[i];
+    if (!any) return TLS_ERR_PROTOCOL;
+
+    uint8_t cke[4 + 1 + 32] = { HS_CLIENT_KEY_EXCHANGE, 0, 0, 33, 32 };
+    memcpy(cke + 5, pub, 32);
+    sha256_update(&transcript, cke, sizeof cke);
+    if ((r = send_record(CT_HANDSHAKE, cke, sizeof cke))) return r;
+
+    uint8_t seed[64];
+    memcpy(seed, client_random, 32);
+    memcpy(seed + 32, server_random, 32);
+    prf(shared, 32, "master secret", seed, 64, master, 48);
+    crypto_wipe(shared, sizeof shared);
+    memcpy(seed, server_random, 32);
+    memcpy(seed + 32, client_random, 32);
+    prf(master, 48, "key expansion", seed, 64, kb, sizeof kb);
+    memcpy(c_key, kb, 32);                                  // no MAC keys with an AEAD
+    memcpy(s_key, kb + 32, 32);
+    memcpy(c_iv, kb + 64, 12);
+    memcpy(s_iv, kb + 76, 12);
+    crypto_wipe(kb, sizeof kb);
+
+    static const uint8_t ccs[6] = { CT_CCS, 3, 3, 0, 1, 1 };
+    if (io->write(ccs, sizeof ccs) < 0) return TLS_ERR_IO;
+    enc_out = 1;
+    c_seq = 0;
+    uint8_t fin[4 + 12] = { HS_FINISHED, 0, 0, 12 };
+    transcript_hash(h);
+    prf(master, 48, "client finished", h, 32, fin + 4, 12);
+    sha256_update(&transcript, fin, sizeof fin);
+    if ((r = send_record(CT_HANDSHAKE, fin, sizeof fin))) return r;
+
+    expect_ccs = 1;                                         // read_record turns decryption on
+    if ((r = next_handshake(&msg, &len))) return r;
+    if (!enc_in || msg[0] != HS_FINISHED || len != 4 + 12) return TLS_ERR_PROTOCOL;
+    uint8_t expect[12], diff = 0;
+    transcript_hash(h);
+    prf(master, 48, "server finished", h, 32, expect, 12);
+    crypto_wipe(master, sizeof master);
+    for (int i = 0; i < 12; i++) diff |= expect[i] ^ msg[4 + i];
+    if (diff) return TLS_ERR_PROTOCOL;
+    consume_handshake(len);
+    return 0;
 }
 
 int tls_connect(const tls_io_t *io_, const char *host) {
@@ -288,6 +462,7 @@ int tls_connect(const tls_io_t *io_, const char *host) {
     app_len = 0;
     closed = 0;
     enc_in = enc_out = 0;
+    tls12 = expect_ccs = 0;
     c_seq = s_seq = 0;
     sha256_init(&transcript);
 
@@ -303,8 +478,10 @@ int tls_connect(const tls_io_t *io_, const char *host) {
     uint8_t *msg;
     uint32_t len;
     if ((r = next_handshake(&msg, &len))) return r;
-    if (!server_hello(msg, len, server_pub)) return TLS_ERR_PROTOCOL;
+    int version = server_hello(msg, len, server_pub);
+    if (!version) return TLS_ERR_PROTOCOL;
     consume_handshake(len);
+    if (version == 12) return handshake12(secret);
     crypto_x25519(shared, secret, server_pub);
     crypto_wipe(secret, sizeof secret);
     uint8_t any = 0;

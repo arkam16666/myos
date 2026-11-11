@@ -1,4 +1,4 @@
-// tls.h - a small TLS 1.3 client (HTTPS downloads)
+// tls.h - a small TLS 1.3 / 1.2 client (HTTPS downloads)
 #ifndef TLS_H
 #define TLS_H
 #include <stdint.h>
