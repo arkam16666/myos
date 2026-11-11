@@ -16,6 +16,7 @@
 #include "print.h"
 #include "proc.h"
 #include "../csdk/myos_info.h"
+#include "http.h"
 #include "wifi.h"
 #ifndef NO_USB
 #include "broadcom/vcmailbox.h"
@@ -108,6 +109,40 @@ enum {                          // MyFS v2 folders (csdk/myos.h): from 32 on
     SYS_MKDIR = 32, SYS_RMDIR, SYS_RENAME, SYS_STAT, SYS_READDIR, SYS_CHDIR, SYS_GETCWD
 };
 #define SYS_WIFI 48                         // (a fixed number: csdk/myos.h)
+#define SYS_FETCH 49
+
+// download a URL for a program (pip, npm ...): into its memory, or into a file
+#define FETCH_BUF ((uint8_t *)0x01000000)   // (the same free RAM 'pkg' uses; nothing else runs meanwhile)
+#define FETCH_FILE_MAX (8u * 1024 * 1024)
+
+static int64_t sys_fetch(uint64_t addr) {
+    if (!user_range(addr, sizeof(struct myos_fetch))) return MYOS_FETCH_EARGS;
+    struct myos_fetch *f = (struct myos_fetch *)addr;
+    char url[300], path[MYFS_PATH_MAX];
+    int i = 0;
+    for (; i < (int)sizeof url - 1; i++) {
+        if (!user_range(f->url + (uint64_t)i, 1)) return MYOS_FETCH_EARGS;
+        char ch = *(const char *)(f->url + (uint64_t)i);
+        if (ch == 0) break;
+        if (ch <= ' ' || ch > '~') return MYOS_FETCH_EARGS;
+        url[i] = ch;
+    }
+    url[i] = 0;
+    f->len = 0;
+    f->status = 0;
+    f->error = 0;
+    int to_file = f->save_as != 0;
+    if (to_file && !user_path(f->save_as, path)) return f->error = MYOS_FETCH_EARGS;
+    if (!to_file && (!f->max || !user_range(f->buf, f->max))) return f->error = MYOS_FETCH_EARGS;
+    uint32_t len = 0;
+    int r = to_file ? http_get_url(url, FETCH_BUF, FETCH_FILE_MAX, &len)
+                    : http_get_url(url, (uint8_t *)f->buf, f->max, &len);
+    if (r < 0) return f->error = r;                 // (same numbers as MYOS_FETCH_E*)
+    f->status = r;
+    f->len = len;
+    if (to_file && r == 200 && myfs_write(path, FETCH_BUF, len)) return f->error = MYOS_FETCH_EDISK;
+    return 0;
+}
 
 static int64_t sys_procinfo(uint64_t index, uint64_t addr) {
     if (!user_range(addr, sizeof(struct myos_procinfo))) return -1;
@@ -310,6 +345,8 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
             return proc_kill((int)a);
         case SYS_WIFI:
             return wifi_syscall(a, b, c);
+        case SYS_FETCH:
+            return sys_fetch(a);
         case SYS_KEYNOW: {                          // a key if one is waiting, else -1
             if (!is_foreground()) {
                 console_poll();

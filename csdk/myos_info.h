@@ -72,6 +72,24 @@ struct myos_wifi_connect {
     char password[64];      /* "" for an open network; 8-63 characters for WPA/WPA2 */
 };
 
+/* SYS_FETCH (MyOS Pi): download a URL (http:// to the PC, https:// over Wi-Fi).
+ * The server's certificate is NOT checked (see arm/tls.c): check what you get
+ * (hashes, signatures) before trusting it. */
+struct myos_fetch {
+    uint64_t url;           /* in: const char *, up to 299 characters */
+    uint64_t buf;           /* in: where the body goes (unused with save_as) */
+    uint32_t max;           /* in: size of buf */
+    uint32_t len;           /* out: bytes of body */
+    int32_t status;         /* out: HTTP status (200 = OK) */
+    int32_t error;          /* out: 0, or a MYOS_FETCH_E* below */
+    uint64_t save_as;       /* in: const char * path, or 0: write the body to this file (max 8 MB) */
+};
+enum {
+    MYOS_FETCH_ENONET = -1, MYOS_FETCH_ECONNECT = -2, MYOS_FETCH_ETIMEOUT = -3,
+    MYOS_FETCH_ETOOBIG = -4, MYOS_FETCH_EBAD = -5, MYOS_FETCH_EDNS = -6, MYOS_FETCH_ETLS = -7,
+    MYOS_FETCH_EARGS = -8, MYOS_FETCH_EDISK = -9
+};
+
 /* SYS_STAT (MyFS v2 folders) */
 struct myos_stat {
     uint32_t type;          /* 1 file, 2 folder */

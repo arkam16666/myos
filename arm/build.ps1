@@ -171,12 +171,18 @@ if ((Test-Path ../third_party/micropython/py) -and $make) {
     }
     Push-Location (Join-Path $src 'python')
     $ErrorActionPreference = 'Continue'
-    try { & $make ARCH=arm64 -j8 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '\berror\b' } | ForEach-Object { Write-Host "  $_" } }
+    # Run make twice: the first run sometimes regenerates the QSTR headers but
+    # leaves the old binary in place without an error; the second links it.
+    try {
+        foreach ($pass in 1, 2) {
+            & $make ARCH=arm64 -j8 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '\berror\b' } | ForEach-Object { Write-Host "  $_" }
+        }
+    }
     finally { Pop-Location; $env:PATH = $savedPath; $ErrorActionPreference = 'Stop' }
     if (-not (Test-Path ../python/build-arm64/python)) { throw "MicroPython (ARM) build failed" }
     # a half-finished build once left an old binary behind: make sure the myos module is in it
     $pybin = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Resolve-Path ../python/build-arm64/python)))
-    if (-not ($pybin.Contains('sysinfo') -and $pybin.Contains('getkey'))) {
+    if (-not ($pybin.Contains('sysinfo') -and $pybin.Contains('getkey') -and $pybin.Contains('download'))) {
         throw "MicroPython (ARM) binary is missing the myos module - run arm\build.ps1 again"
     }
     python ../tools/mkpkg.py ../python/build-arm64/python ../python/python.info build/packages/python.pkg

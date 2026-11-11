@@ -17,7 +17,8 @@ enum {
     SYS_PROCINFO,   /* MyOS Pi only: (index, struct myos_procinfo *) -> 0, or -1 past the end */
     SYS_SYSINFO,    /* MyOS Pi only: (struct myos_sysinfo *) */
     SYS_KILL,       /* MyOS Pi only: (pid) stop a program -> 0, or -1 */
-    SYS_WIFI = 48   /* MyOS Pi only: (op, a, b) Wi-Fi, see MYOS_WIFI_* in myos_info.h */
+    SYS_WIFI = 48,  /* MyOS Pi only: (op, a, b) Wi-Fi, see MYOS_WIFI_* in myos_info.h */
+    SYS_FETCH = 49  /* MyOS Pi only: (struct myos_fetch *) download a URL -> 0, or MYOS_FETCH_E* */
 };
 /* MyOS Pi only: folders on MyFS v2. They start at 32 (17-31 are free for other
  * new calls). Paths may be relative to the program's current folder, which it
@@ -80,6 +81,7 @@ static inline long sys_procinfo(long i, struct myos_procinfo *p) { return myos_s
 static inline long sys_sysinfo(struct myos_sysinfo *s) { return myos_syscall(SYS_SYSINFO, (long)s, 0); }
 static inline long sys_kill(long pid)              { return myos_syscall(SYS_KILL, pid, 0); }
 static inline long sys_wifi(long op, long a, long b) { return myos_syscall3(SYS_WIFI, op, a, b); }
+static inline long sys_fetch(struct myos_fetch *f)  { return myos_syscall(SYS_FETCH, (long)f, 0); }
 
 /* files on the MyFS disk; every call returns -1 on error */
 static inline long sys_file_size(const char *name) {

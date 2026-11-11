@@ -241,7 +241,56 @@ static mp_obj_t myos_wifi_saved(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(myos_wifi_saved_obj, myos_wifi_saved);
 
+// ---- downloads (SYS_FETCH): the certificate isn't checked - check hashes yourself
+static void fetch_raise(int err) {
+    static const char *const text[] = {
+        "", "no network", "can't connect to the server", "the server stopped answering",
+        "too big", "the server sent something odd", "can't find the server's address (DNS)",
+        "the secure (HTTPS) connection failed", "bad arguments", "disk full or disk error" };
+    int i = -err;
+    mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT(i > 0 && i < (int)(sizeof text / sizeof text[0])
+                                                 ? text[i] : "download failed"));
+}
+
+// myos.fetch(url, max=262144) -> (status, bytes)
+static mp_obj_t myos_fetch(size_t n_args, const mp_obj_t *args) {
+    const char *url = mp_obj_str_get_str(args[0]);
+    mp_int_t max = n_args > 1 ? mp_obj_get_int(args[1]) : 256 * 1024;
+    if (max < 1024) max = 1024;
+    vstr_t v;
+    vstr_init_len(&v, (size_t)max);
+    struct myos_fetch f;
+    memset(&f, 0, sizeof f);
+    f.url = (uint64_t)(uintptr_t)url;
+    f.buf = (uint64_t)(uintptr_t)v.buf;
+    f.max = (uint32_t)max;
+    long r = sys_fetch(&f);
+    if (r < 0 || f.error) {
+        vstr_clear(&v);
+        fetch_raise(f.error ? f.error : (int)r);
+    }
+    v.len = f.len;
+    mp_obj_t t[2] = { mp_obj_new_int(f.status), mp_obj_new_bytes_from_vstr(&v) };
+    return mp_obj_new_tuple(2, t);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(myos_fetch_obj, 1, 2, myos_fetch);
+
+// myos.download(url, path) -> (status, size); the file is written only when status is 200
+static mp_obj_t myos_download(mp_obj_t url_in, mp_obj_t path_in) {
+    struct myos_fetch f;
+    memset(&f, 0, sizeof f);
+    f.url = (uint64_t)(uintptr_t)mp_obj_str_get_str(url_in);
+    f.save_as = (uint64_t)(uintptr_t)mp_obj_str_get_str(path_in);
+    long r = sys_fetch(&f);
+    if (r < 0 || f.error) fetch_raise(f.error ? f.error : (int)r);
+    mp_obj_t t[2] = { mp_obj_new_int(f.status), mp_obj_new_int_from_uint(f.len) };
+    return mp_obj_new_tuple(2, t);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(myos_download_obj, myos_download);
+
 static const mp_rom_map_elem_t myos_module_globals_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_fetch), MP_ROM_PTR(&myos_fetch_obj) },
+    { MP_ROM_QSTR(MP_QSTR_download), MP_ROM_PTR(&myos_download_obj) },
     { MP_ROM_QSTR(MP_QSTR_wifi_status), MP_ROM_PTR(&myos_wifi_status_obj) },
     { MP_ROM_QSTR(MP_QSTR_wifi_scan), MP_ROM_PTR(&myos_wifi_scan_obj) },
     { MP_ROM_QSTR(MP_QSTR_wifi_networks), MP_ROM_PTR(&myos_wifi_networks_obj) },
