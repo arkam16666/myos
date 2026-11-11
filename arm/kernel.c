@@ -180,6 +180,7 @@ static void read_line(char *buf, int size) {
 static int sd_status = 1;           // 1 = not tried, 0 = ok, <0 = init step that failed
 static int fat_status = 1;
 static myfs_dev_t myfs_dev;
+static int mount_status = MYFS_ERR_NOFS;
 
 static void storage_init(void) {
     sd_status = sd_init();
@@ -191,7 +192,7 @@ static void storage_init(void) {
     myfs_dev.sectors = f.sectors;
     myfs_dev.read = sd_read;
     myfs_dev.write = sd_write;
-    myfs_mount(&myfs_dev);
+    mount_status = myfs_mount(&myfs_dev);
 }
 
 static void print_check_report(const myfs_check_t *r, int full) {
@@ -245,7 +246,14 @@ static void print_storage_status(void) {
     } else if (fat_status) {
         console_puts("can't read the boot partition\n\n");
     } else if (!myfs_mounted()) {
-        console_puts("myfs.img has no file system. Type 'format' to create one.\n\n");
+        if (mount_status == MYFS_ERR_NOFS) {
+            console_puts("myfs.img has no file system. Type 'format' to create one.\n\n");
+        } else {                    // there is a MyFS, it just can't be used: never suggest format
+            console_puts("myfs.img has MyFS, but it can't be mounted (");
+            console_puts(myfs_error(mount_status));
+            console_puts(").\n      Don't 'format': copy myfs.img to the PC and run\n"
+                         "      python tools/myfs.py myfs.img fsck\n\n");
+        }
     } else {
         console_puts("MyFS mounted from myfs.img, ");
         print_dec((uint64_t)myfs_count());

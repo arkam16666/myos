@@ -63,7 +63,7 @@ powershell -ExecutionPolicy Bypass -File arm\install-pi.ps1 -User <ชื่อ�
 
 **ไฟล์ที่ต้องมีในไดรฟ์ `bootfs`** (วางด้วยตัวอ่านการ์ดครั้งแรกครั้งเดียว):
 - `myos8.img` = `arm\build\myos8.img` (kernel ขนาดตายตัว 1 MB เพื่อให้อัปเดตทับที่เดิมได้)
-- `myfs.img` = ระบบไฟล์ของ MyOS สร้างด้วย `python tools\myfs.py myfs.img create 16`
+- `myfs.img` = ระบบไฟล์ของ MyOS สร้างด้วย `python tools\myfs.py myfs.img create 64` (MyFS v2, ตัวเลข = ขนาดเป็น MB ใหญ่ได้ถึงที่ว่างในไดรฟ์ `bootfs`)
 
 **อัปเดตครั้งต่อไป (ไม่ต้องถอดการ์ด):** เสียบ Pi ทาง USB แล้ว
 ```powershell
@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File arm\update-pi.ps1
 
 **ใช้งาน:** เสียบสาย USB เข้าช่อง **USB** ของ Pi (ช่องกลาง) MyOS จะขึ้นเป็นพอร์ต COM ใหม่ เปิดด้วย PuTTY (Serial) ไฟ LED สีเขียวกะพริบ "ติ๊ก-ติ๊ก… เว้น" = MyOS รันอยู่, กะพริบรัวเร็ว = พัง
 
-คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cat`, `write`, `rm`, `format`, `pkg`, `net`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
+คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cd`, `pwd`, `mkdir`, `rmdir`, `tree`, `cat`, `write`, `cp`, `mv`, `rm`, `df`, `fsck`, `fsupgrade`, `format`, `pkg`, `net`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
 
 **เครือข่ายผ่านสาย USB:** นอกจากพอร์ต COM แล้ว Pi ยังขึ้นเป็นการ์ดเครือข่าย "MyOS Network" บน Windows (Windows 10 ขึ้นไปโหลด driver เอง) Pi คือ `192.168.7.1` (ชื่อ `myos.usb`) คอมจะได้ `192.168.7.2` อัตโนมัติ
 - `ping 192.168.7.1`
@@ -124,13 +124,49 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 
 ใช้ `edit` เขียนไฟล์โปรแกรมบน Pi ได้เลย เช่น `edit game.lua` แล้วรันด้วย `lua game.lua`
 
-**C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของ Lua เลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
+**C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), โฟลเดอร์ (`opendir`/`readdir`, `mkdir`, `stat`, `chdir`, `getcwd`, `rename`), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของ Lua เลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
 
 ข้อจำกัด: Pi ไม่มีนาฬิกา `os.time()` / `time()` นับจาก 1 ม.ค. 2000 ตอนเปิดเครื่อง, ยังรันคำสั่ง shell จากในโปรแกรมไม่ได้ (`os.execute`)
 
 เขียนแอปเพิ่มเองได้: วางไฟล์ `.py` ใน `apps\py\` ใส่บรรทัด `# @version 1.0` และ `# @description ...` แล้วเปิด `tools\repo.py` ใหม่ แอปใช้โมดูล `myos` ได้: `myos.key()` (อ่านปุ่มไม่ต้องรอ Enter), `myos.getkey()`, `myos.clear()`, `myos.move(x, y)`, `myos.cursor(on)`, `myos.ticks()`, `myos.procs()`, `myos.sysinfo()`, `myos.kill(pid)` ทดสอบแอปทั้งหมดใน QEMU ด้วย `python tests\qemu_apps.py`
 
-ข้อจำกัด: MyFS ตอนนี้เก็บได้สูงสุด 64 ไฟล์ (จะแก้ในข้อ 3.4 MyFS v2)
+**ไฟล์และโฟลเดอร์ (MyFS v2):**
+```
+ls [โฟลเดอร์]          ดูไฟล์ (โฟลเดอร์มี / ต่อท้าย)
+cd apps                เข้าโฟลเดอร์ (cd .. ถอยขึ้น, cd เฉยๆ กลับไปที่ /)
+pwd                    อยู่โฟลเดอร์ไหน (prompt ก็บอก เช่น myos:/apps>)
+mkdir games            สร้างโฟลเดอร์ (mkdir -p a/b/c สร้างทั้งสาย)
+rmdir games            ลบโฟลเดอร์ว่าง
+cp a.txt /backup       คัดลอกไฟล์ (ปลายทางเป็นโฟลเดอร์ = ใส่ไว้ในนั้น)
+mv a.txt b.txt         เปลี่ยนชื่อ หรือย้ายไฟล์/โฟลเดอร์ (mv a.txt /backup)
+rm -r games            ลบโฟลเดอร์พร้อมทุกอย่างข้างใน
+tree                   ดูทุกอย่างในโฟลเดอร์แบบต้นไม้
+cat apps/x.py          ทุกคำสั่งใช้ path ได้: /apps/x.py, ../x.txt, ./x.txt
+df                     พื้นที่ทั้งหมด / ที่ใช้ / ที่เหลือ
+fsck                   ตรวจระบบไฟล์ (fsck fix = ลบ entry ที่เสีย)
+```
+- ชื่อยาวได้ 63 ตัวอักษร (ห้ามมีช่องว่าง), เก็บได้หลายพันไฟล์, ไฟล์ใหญ่ได้เท่าที่ว่าง, ลบหรือเขียนไฟล์ให้เล็กลงแล้วได้พื้นที่คืนทันที
+- COM, telnet และ SSH แต่ละ session มีโฟลเดอร์ปัจจุบันของตัวเอง โปรแกรมที่รันจะเริ่มที่โฟลเดอร์นั้น (เช่น `cd games` แล้ว `python snake.py` เปิด `/games/snake.py`)
+- พิมพ์ชื่อโปรแกรมเฉยๆ MyOS หาที่ `/` (ที่ `pkg` ติดตั้ง) ก่อน แล้วค่อยหาในโฟลเดอร์ปัจจุบัน แอป Python จาก `pkg` รันได้จากทุกโฟลเดอร์
+- ไฟดับระหว่างเขียน: เสียอย่างมากแค่ไฟล์ที่กำลังเขียน (ส่วนใหญ่ได้ไฟล์เดิมคืน) เพราะเขียนข้อมูลลงที่ว่างก่อน แล้วค่อยเปลี่ยน entry ใน sector เดียว ตอนบูต MyOS ตรวจทุกโฟลเดอร์และคืนพื้นที่ที่ค้างไว้ให้เอง
+- Python 1.4 ขึ้นไป (`pkg upgrade`): `os.listdir('/apps')`, `os.mkdir`, `os.rmdir`, `os.rename`, `os.stat`, `os.chdir`, `os.getcwd`, `open('apps/x.txt')`
+
+**อัปเกรด MyFS เดิม (v1) เป็น v2** (การ์ดที่สร้างก่อนมี v2): MyFS v1 (สูงสุด 64 ไฟล์ ไม่มีโฟลเดอร์) ยังใช้ได้เหมือนเดิม ตอนบูตจะขึ้นว่า `old MyFS v1` เมื่อพร้อมแล้ว
+1. (แนะนำ) สำรองไว้ก่อน: ถอดการ์ดใส่คอม คัดลอก `myfs.img` จากไดรฟ์ `bootfs` เก็บไว้ แล้วใส่การ์ดกลับ
+2. อัปเดต MyOS เป็นรุ่นที่มี MyFS v2 (`arm\update-pi.ps1`) แล้วดูว่า `ls` เห็นไฟล์ครบ
+3. พิมพ์ `fsupgrade` จะขึ้น `Done: N file(s) kept`
+4. `ls` ดูว่าไฟล์ครบ และ `fsck` ต้องขึ้น `No problems found.` ต่อจากนี้ใช้ `mkdir`, `cd` ได้เลย
+- ไม่มีการย้ายข้อมูลของไฟล์: MyOS เขียนตารางโฟลเดอร์กับ bitmap ใหม่ลงที่ว่าง แล้วเปลี่ยน sector แรกเป็นขั้นสุดท้าย ถ้าไฟดับก่อนขั้นนั้นก็ยังเป็น v1 เหมือนเดิม ถ้าที่ว่างไม่พอ (ไม่ถึง 20 KB) จะไม่แตะอะไรเลย ให้ลบไฟล์ออกสักไฟล์แล้วลองใหม่
+- พื้นที่ที่ v1 ไม่เคยคืน (ไฟล์ที่ลบไปแล้ว) ได้คืนหมดหลังอัปเกรด
+- หลังอัปเกรด MyOS PC (x86) และ kernel ของ Pi รุ่นก่อน v2 อ่าน `myfs.img` นี้ไม่ได้แล้ว ถ้าต้องย้อนกลับ ให้วาง `myfs.img` ที่สำรองไว้กลับลงการ์ด
+- ทำบนคอมแทนก็ได้: `python tools\myfs.py myfs.img upgrade`
+
+**ขยาย `myfs.img` ให้ใหญ่ขึ้น** (เช่น 256 MB): สร้างอันใหม่แล้วคัดลอกทุกอย่างจากอันเดิม (อันเดิมเป็น v1 หรือ v2 ก็ได้)
+```powershell
+python tools\myfs.py myfs-new.img create 256
+python tools\myfs.py myfs-new.img import myfs.img
+```
+แล้ววางทับ `myfs.img` ในไดรฟ์ `bootfs` (ไฟล์ต้องเรียงต่อกันบนการ์ด ถ้าบูตแล้วขึ้น `myfs.img is in pieces` ให้ลบไฟล์อื่นที่ไม่ใช้หรือคัดลอกใหม่) ใหญ่ได้ถึง 4 GB แต่ไม่เกินที่ว่างของ partition `bootfs`
 
 **รันหลายโปรแกรมพร้อมกัน** (multitasking):
 ```
@@ -186,6 +222,7 @@ python tools\myfs.py disk.img ls
 python tools\myfs.py disk.img put files\ชื่อ.py
 python tools\myfs.py disk.img get note.txt
 ```
+`tools\myfs.py` ใช้กับ `myfs.img` ของ Pi ได้ด้วย (อ่านเขียนได้ทั้ง v1 และ v2): `ls /apps`, `tree`, `mkdir /apps`, `put game.py /apps/`, `mv`, `rm`, `rmdir`, `info`, `fsck`, `upgrade`, `import อันเดิม.img` (MyOS PC ยังใช้ MyFS v1 `format` ของ disk.img เปล่าจึงได้ v1 เสมอ)
 
 ## โครงสร้างโฟลเดอร์
 

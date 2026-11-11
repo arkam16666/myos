@@ -1010,7 +1010,7 @@ static int v2_mount(void) {
     bm_sectors = rd32(s + 16);
     if (total < 32 || total > dev.sectors || total > MAX_SECTORS ||
         bm_sectors != (total + 4095) / 4096 || bm_start == 0 || bm_start + bm_sectors > total) {
-        return MYFS_ERR_NOFS;
+        return MYFS_ERR_CORRUPT;            // MyFS v2, but not a sane one: never "format" it
     }
     cache_clear();
     alloc_hint = bm_start + bm_sectors;
