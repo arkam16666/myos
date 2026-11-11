@@ -1,4 +1,4 @@
-"""Test the programming-language packages in QEMU (Raspberry Pi 3B).
+"""Test the programming-language packages (and sqlite3) in QEMU (Raspberry Pi 3B).
 
 Installs each language from its package and runs small programs in it.
 
@@ -103,6 +103,20 @@ TESTS = {
         ("node", ["let x = 6 * 7", "x + 1", "[1, 2].map(n => n * x)", "await new Promise(r => setTimeout(() => r('done'), 20))",
                   "nope()", ".exit"],
          ["Welcome to JavaScript", "43", "[ 42, 84 ]", '"done"', "Uncaught ReferenceError"]),
+    ],
+    "sqlite3": [
+        ("sqlite3 shop.db \"CREATE TABLE fruit(id INTEGER PRIMARY KEY, name TEXT, price REAL)\""
+         " \"INSERT INTO fruit(name, price) VALUES ('apple', 1.5), ('banana', 0.25), ('mango', 3)\"", [], []),
+        ("sqlite3 -box shop.db \"SELECT name, price FROM fruit WHERE price > 1\"", [],
+         ["│ apple │   1.5 │", "│ mango │   3.0 │"]),
+        ("sqlite3 shop.db", [".mode csv", ".headers on", "SELECT count(*) AS n,", "sum(price) AS total FROM fruit;",
+                             ".once f.csv", "SELECT * FROM fruit;", ".import f.csv copy",
+                             "SELECT 'rows=' || count(*) FROM copy;", "SELEC 1;", ".quit"],
+         ["n,total", "3,4.75", "Imported 3 row(s) into copy", "rows=3", "Parse error"]),
+        ("sqlite3 :memory: \"SELECT sqrt(16), upper('abc'), json_array(1, 2), 7 / 2, typeof(7 / 2.0)\"", [],
+         ["4.0|ABC|[1,2]|3|real"]),
+        ("sqlite3 shop.db .dump", [], ["CREATE TABLE fruit", "INSERT INTO \"fruit\" VALUES(1,'apple',1.5);",
+                                       "CREATE TABLE \"copy\"", "COMMIT;"]),
     ],
 }
 

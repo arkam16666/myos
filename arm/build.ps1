@@ -111,6 +111,10 @@ $ports = @{
               @('-Os', '-include', '../ports/node/config.h', '-I../ports/node', '-I../third_party/quickjs',
                 '../ports/node/node.c') +
               (@('quickjs', 'libregexp', 'libunicode', 'cutils', 'dtoa') | ForEach-Object { "../third_party/quickjs/$_.c" }) } }
+    # SQLite: the amalgamation + our shell and MyFS file layer (ports\sqlite3\cli.c instead of shell.c)
+    'sqlite3' = { if (Test-Path ../third_party/sqlite/sqlite3.c) {
+              @('-Os', '-include', '../ports/sqlite3/config.h', '-I../third_party/sqlite',
+                '../ports/sqlite3/cli.c', '../third_party/sqlite/sqlite3.c') } }
 }
 foreach ($name in $ports.Keys) {
     $src = & $ports[$name]

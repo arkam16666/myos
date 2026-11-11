@@ -34,6 +34,26 @@ foreach ($d in $deps) {
     if ($LASTEXITCODE) { throw "failed to get $($d.Path)" }
 }
 
+# sources released only as zip files: checked against the SHA-256 they had when tested
+$zips = @(
+    @{ Path = 'third_party/sqlite'; Url = 'https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip'
+       Sha256 = '0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9' }   # SQLite 3.54.1 (package 'sqlite3')
+)
+foreach ($z in $zips) {
+    if (Test-Path $z.Path) {
+        Write-Host "$($z.Path): already there"
+        continue
+    }
+    Write-Host "$($z.Path): downloading..."
+    $zip = Join-Path ([IO.Path]::GetTempPath()) 'myos-dep.zip'
+    $unpack = "$($z.Path).unpack"
+    Invoke-WebRequest $z.Url -OutFile $zip -UseBasicParsing
+    if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $z.Sha256) { throw "$($z.Url): checksum doesn't match" }
+    Expand-Archive $zip -DestinationPath $unpack -Force
+    Move-Item (Get-ChildItem $unpack -Directory | Select-Object -First 1).FullName $z.Path    # drop the zip's top folder
+    Remove-Item $unpack, $zip -Recurse
+}
+
 # Raspberry Pi firmware, only needed for USB boot (arm\usbboot.ps1)
 $fw = 'https://github.com/raspberrypi/firmware/raw/stable/boot'
 foreach ($f in 'bootcode.bin', 'start.elf', 'fixup.dat', 'start_cd.elf', 'fixup_cd.dat', 'LICENCE.broadcom') {
