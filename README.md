@@ -91,13 +91,13 @@ ssh myos@192.168.7.1
 - OpenSSH 10 ขึ้นไปจะเตือนว่า "not using a post-quantum key exchange" เป็นแค่คำเตือน ใช้งานได้ปกติ
 - host key อยู่ในไฟล์ `ssh_host_ed25519.key` ส่วนรหัสผ่านเก็บเป็น hash ใน `ssh_password` บน MyFS (ถ้า `format` ใหม่ host key จะเปลี่ยน ssh จะเตือน ให้ลบบรรทัด 192.168.7.1 ออกจาก `%USERPROFILE%\.ssh\known_hosts`)
 
-**ติดตั้งแอปแบบ apt** (ผ่าน USB network): บนคอมเปิดคลังแอปทิ้งไว้
+**ติดตั้งแอปแบบ apt:** ถ้า Pi ต่อ Wi-Fi อยู่ `pkg update` ดึงคลังแอปจาก **GitHub** เอง (branch `packages` ของ repo นี้, ผ่าน HTTPS) ไม่ต้องเปิดอะไรบนคอม ถ้าไม่มีเน็ตจะลองดึงจากคอมผ่านสาย USB แทน ซึ่งต้องเปิดคลังแอปบนคอมทิ้งไว้:
 ```powershell
 python tools\repo.py
 ```
 แล้วบน Pi:
 ```
-pkg update              ดึงรายการแอปจากคอม
+pkg update              ดึงรายการแอป (GitHub ผ่าน Wi-Fi หรือคอมผ่านสาย USB)
 pkg search [คำ]          ดูว่ามีแอปอะไรบ้าง (* = ติดตั้งแล้ว)
 pkg install snake 2048  ติดตั้ง (แอป Python จะติดตั้ง python ให้เองถ้ายังไม่มี)
 pkg remove snake        ลบ
@@ -142,6 +142,13 @@ sqlite3 -box shop.db "SELECT ..."            ตารางสวย (หรื
 **C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), โฟลเดอร์ (`opendir`/`readdir`, `mkdir`, `stat`, `chdir`, `getcwd`, `rename`), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` (+ `clock_gettime`, `gettimeofday`), `inttypes.h`, `fenv.h`, `alloca` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua, QuickJS และ SQLite port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของเขาเลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
 
 ข้อจำกัด: Pi ไม่มีนาฬิกา `os.time()` / `time()` นับจาก 1 ม.ค. 2000 ตอนเปิดเครื่อง, ยังรันคำสั่ง shell จากในโปรแกรมไม่ได้ (`os.execute`)
+
+**คลังแอปบน GitHub และลายเซ็น:**
+- `python tools/repo.py publish` สร้างคลังแอป เซ็นรายการ แล้ว push ขึ้น branch `packages` (แทนที่ของเดิมทุกครั้ง) Pi เห็นของใหม่ภายในราว 5 นาที (GitHub cache)
+- รายการแอป `index.txt` ถูกเซ็นด้วย Ed25519 (`index.sig`) MyOS มี public key ฝังอยู่ (`arm/repo_key.h`) และ**ไม่ยอมใช้รายการจากอินเทอร์เน็ตที่ลายเซ็นไม่ถูก** ส่วนแต่ละแพ็กเกจตรวจด้วย SHA-256 ที่อยู่ในรายการ (หลักเดียวกับ apt)
+- key ลับอยู่**นอก repo** ที่ `~/.myos/repo-signing-key` (สร้างครั้งเดียวด้วย `python tools/repo.py keygen`) ใครจะ publish ต้องมีไฟล์นี้ ถ้าหายต้องสร้างใหม่แล้ว build MyOS ใหม่ให้ Pi รู้จัก key ใหม่
+- HTTPS ของ MyOS เป็น TLS 1.3 ที่เขียนเอง (`arm/tls.c`: X25519 + ChaCha20-Poly1305) ไม่ตรวจใบรับรองของ server (ความปลอดภัยมาจากลายเซ็นข้างบน)
+- เปลี่ยนแหล่งได้ด้วยไฟล์ `pkg.src` บน MyFS: `pc` = ใช้คอมผ่านสาย USB เสมอ, หรือ URL อื่นที่ลงท้ายด้วย `/`
 
 เขียนแอปเพิ่มเองได้: วางไฟล์ `.py` ใน `apps\py\` ใส่บรรทัด `# @version 1.0` และ `# @description ...` แล้วเปิด `tools\repo.py` ใหม่ แอปใช้โมดูล `myos` ได้: `myos.key()` (อ่านปุ่มไม่ต้องรอ Enter), `myos.getkey()`, `myos.clear()`, `myos.move(x, y)`, `myos.cursor(on)`, `myos.ticks()`, `myos.procs()`, `myos.sysinfo()`, `myos.kill(pid)` ทดสอบแอปทั้งหมดใน QEMU ด้วย `python tests\qemu_apps.py`
 

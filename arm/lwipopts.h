@@ -14,6 +14,8 @@
 #define LWIP_NETCONN                0
 #define LWIP_SOCKET                 0
 #define LWIP_DHCP                   1       // Wi-Fi asks the router for an address
+#define LWIP_DNS                    1       // names -> addresses (http.c); the server comes from DHCP
+#define DNS_MAX_SERVERS             2
 #define LWIP_NETIF_HOSTNAME         1
 #define LWIP_ICMP                   1       // ping
 #define LWIP_UDP                    1       // DHCP and DNS servers for the PC

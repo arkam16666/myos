@@ -23,6 +23,11 @@
 #include "print.h"
 #include "sha256.h"
 #include "user.h"
+#ifndef NO_USB
+#include "monocypher-ed25519.h"
+#include "repo_key.h"
+#include "tls.h"
+#endif
 
 #define HDR_SIZE  128
 #define P_KIND    4
@@ -260,29 +265,136 @@ static void pkg_list(void) {
     if (!found) console_puts("  (nothing yet: try 'pkg update' then 'pkg search')\n");
 }
 
+// ------------------------------------------------ where packages come from
+// The internet (default: the 'packages' branch of MyOS on GitHub, over Wi-Fi)
+// or the PC over the USB cable (tools/repo.py). The file pkg.src can say
+// "pc" (always the PC) or give another URL ending in '/'. pkg.from remembers
+// where the last 'pkg update' got its list, so installs come from there too.
+// A list from the internet must carry a valid Ed25519 signature
+// (index.sig, made by tools/repo.py with the repository key).
+#define DEFAULT_REPO "https://raw.githubusercontent.com/arkam16666/myos/packages/"
+#define SRC_FILE  "pkg.src"
+#define FROM_FILE "pkg.from"
+
+static char repo_base[200];                 // "" = the PC over USB
+
+static void read_line_file(const char *file, char *out, uint32_t max) {
+    int32_t n = myfs_read(file, 0, out, max - 1);
+    if (n < 0) n = 0;
+    out[n] = 0;
+    for (int32_t i = 0; i < n; i++)
+        if (out[i] == '\r' || out[i] == '\n' || out[i] == ' ') { out[i] = 0; break; }
+}
+
+// download FILE from base ("" = the PC)
+static int fetch_from(const char *base, const char *file, uint8_t *buf, uint32_t max, uint32_t *len) {
+    if (!base[0]) return http_get(file, buf, max, len);
+    char url[300];
+    if (strlen(base) + strlen(file) >= sizeof url) return HTTP_ERR_BAD;
+    strcpy(url, base);
+    strcat(url, file);
+    return http_get_url(url, buf, max, len);
+}
+
+static void say_source(const char *base) {
+    if (base[0] && strncmp(base, DEFAULT_REPO, sizeof DEFAULT_REPO - 1) == 0)
+        console_puts("GitHub (raw.githubusercontent.com)");
+    else if (base[0]) console_puts(base);
+    else {
+        console_puts("the PC (");
+        console_puts(http_host());
+        console_putc(')');
+    }
+}
+
+static void say_http_error(int r) {
+    console_puts("  ");
+    console_puts(http_error(r));
+#ifndef NO_USB
+    if (r == HTTP_ERR_TLS) {
+        console_puts(" (");
+        console_puts(tls_error(http_tls_error()));
+        console_putc(')');
+    }
+#endif
+    console_putc('\n');
+}
+
+static int hexval(char c) {
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
+         : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+// 1 = the list is signed by the MyOS repository key, 0 = no/bad signature
+static int signature_ok(const char *sig_hex, uint32_t sig_len, const uint8_t *list, uint32_t list_len) {
+#ifdef NO_USB
+    (void)sig_hex; (void)sig_len; (void)list; (void)list_len;
+    return 0;
+#else
+    uint8_t sig[64];
+    if (sig_len < 128) return 0;
+    for (int i = 0; i < 64; i++) {
+        int a = hexval(sig_hex[2 * i]), b = hexval(sig_hex[2 * i + 1]);
+        if (a < 0 || b < 0) return 0;
+        sig[i] = (uint8_t)(a * 16 + b);
+    }
+    return crypto_ed25519_check(sig, repo_public_key, list, list_len) == 0;
+#endif
+}
+
 static void pkg_update(void) {
-    console_puts("Getting the package list from ");
-    console_puts(http_host());
-    console_puts(" ...\n");
-    uint32_t len;
-    int r = http_get("index.txt", (uint8_t *)IDX_BUF, IDX_MAX - 1, &len);
-    if (r < 0) {
-        console_puts(http_error(r));
-        console_putc('\n');
-        return;
+    char src[200];
+    read_line_file(SRC_FILE, src, sizeof src);
+    const char *tries[2];
+    int n_tries = 0;
+    if (strcmp(src, "pc") == 0) tries[n_tries++] = "";
+    else {
+        tries[n_tries++] = src[0] ? src : DEFAULT_REPO;
+        tries[n_tries++] = "";              // no internet: the PC over USB
+    }
+    uint32_t len = 0;
+    int r = HTTP_ERR_NONET;
+    const char *base = "";
+    for (int i = 0; i < n_tries; i++) {
+        base = tries[i];
+        console_puts("Getting the package list from ");
+        say_source(base);
+        console_puts(" ...\n");
+        r = fetch_from(base, "index.txt", (uint8_t *)IDX_BUF, IDX_MAX - 1, &len);
+        if (r == 200) break;
+        if (r < 0) say_http_error(r);
+        else {
+            console_puts("  The server answered ");
+            print_dec((uint64_t)r);
+            console_puts(" (no index.txt there?)\n");
+        }
     }
     if (r != 200) {
-        console_puts("The server answered ");
-        print_dec((uint64_t)r);
-        console_puts(" (no index.txt?)\n");
+        console_puts("No package list. On the PC start: python tools\\repo.py   or connect Wi-Fi: wifi connect NAME PASSWORD\n");
         return;
     }
     IDX_BUF[len] = 0;
     idx_len = len;
-    if (myfs_write(IDX_FILE, IDX_BUF, len)) {
+
+    // the signature (index.sig: 128 hex digits) - needed for lists from the internet
+    // (into PKG_BUF: the server's headers alone can be bigger than the signature)
+    uint32_t sig_len = 0;
+    int sr = fetch_from(base, "index.sig", PKG_BUF, 64 * 1024, &sig_len);
+    int signed_ok = sr == 200 && signature_ok((const char *)PKG_BUF, sig_len, (const uint8_t *)IDX_BUF, len);
+    if (signed_ok) console_puts("Signature OK (MyOS repository key).\n");
+    else if (base[0]) {
+        console_puts(sr == 200 ? "The package list's signature is WRONG - not using it.\n"
+                               : "The package list has no signature (index.sig) - not using it.\n");
+        return;
+    } else {
+        console_puts(sr == 200 ? "Warning: the signature doesn't match (from the PC over USB: used anyway).\n"
+                               : "(not signed: from the PC over USB)\n");
+    }
+    if (myfs_write(IDX_FILE, IDX_BUF, len) || myfs_write(FROM_FILE, base, (uint32_t)strlen(base))) {
         console_puts("Disk is full or a disk error happened.\n");
         return;
     }
+    strcpy(repo_base, base);
     entry_t e;
     int n = 0, newer = 0;
     for (; idx_entry(n, &e); n++) {
@@ -501,10 +613,10 @@ static int install(const char *name, int from_repo, int depth) {
     print_dec(e.size);
     console_puts(" bytes) ...\n");
     uint32_t len;
-    int r = http_get(file, PKG_BUF, PKG_MAX, &len);
+    read_line_file(FROM_FILE, repo_base, sizeof repo_base);   // where the list came from
+    int r = fetch_from(repo_base, file, PKG_BUF, PKG_MAX, &len);
     if (r < 0) {
-        console_puts(http_error(r));
-        console_putc('\n');
+        say_http_error(r);
         return 0;
     }
     uint8_t h[32];

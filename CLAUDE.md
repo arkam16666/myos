@@ -40,6 +40,7 @@ Plugged in by USB it is a serial port (USB ID 1209:0001; `COMn` on Windows, `/de
 - Send files into MyFS: `arm\push-pi.ps1 file... | -Packages`, or `python3 tools/pi.py push FILE...`.
 - Run a shell command and read the answer: `python3 tools/pi.py run "CMD" [SECONDS]` (handy for checking things on the board).
 - `python tools/repo.py` serves the package repository on 192.168.7.2:8080 for `pkg update` / `pkg install`. It snapshots `arm/build/packages` and `apps/py` at startup: restart it after rebuilding.
+- `python tools/repo.py publish` builds, Ed25519-signs (`index.sig`; secret key in `~/.myos/repo-signing-key`, outside the repo; public half in `arm/repo_key.h`) and force-pushes the repository to the `packages` branch. With Wi-Fi online, `pkg update` on the Pi fetches it from raw.githubusercontent.com over HTTPS (`arm/tls.c`: TLS 1.3, X25519 + ChaCha20-Poly1305, no certificate check: the signature is what's trusted) and falls back to the PC over USB. Lists from the internet without a valid signature are refused. `tests/host/tls_test.c` runs `tls.c` on the PC against a real server.
 - `ssh myos@192.168.7.1` (password set on the Pi with `passwd`), telnet port 23 (USB only, no password).
 - Only one program can hold the serial port: close PuTTY/screen before update/push/run.
 - A kernel panic halts the Pi; pressing R on the serial terminal restarts it. A kernel that doesn't boot means pulling the SD card, so test in QEMU before flashing.
