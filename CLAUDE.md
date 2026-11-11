@@ -48,6 +48,7 @@ Plugged in by USB it is a serial port (USB ID 1209:0001; `COMn` on Windows, `/de
 
 ## Environment gotchas
 
+- Licence: MyOS is MIT (`LICENSE`). Code adapted from other projects must keep its notice and be listed in `THIRD-PARTY-NOTICES.md` (currently TinyUSB example code in `arm/net.c` and `arm/usb.c`); new third-party dependencies also go in that file's table and in README's table.
 - On Windows the project path contains Thai characters, which `make` can't handle: `arm/build.ps1` builds MicroPython through the junction `%TEMP%\myos-src` (run make from PowerShell, not Git Bash, which resolves the junction back; LLVM and Git's `usr\bin` must be on PATH). On macOS/Linux it builds in place, or through a symlink if the path is non-ASCII.
 - In the Bash tool, heredocs turn `\\` into `\`, which breaks C/Python escapes like `'\n'`. Use the Write/Edit tools for content with backslashes.
 - Files are a mix of CRLF (git checkout) and LF (newly written). Scripted replacements must try both and keep each file's line endings.

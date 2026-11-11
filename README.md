@@ -312,10 +312,21 @@ myos\
 | | ใช้ทำ | สัญญาอนุญาต |
 |---|---|---|
 | [MicroPython](https://github.com/micropython/micropython) | Python บน MyOS | MIT |
-| [TinyUSB](https://github.com/hathach/tinyusb) | USB serial บน MyOS Pi | MIT |
+| [TinyUSB](https://github.com/hathach/tinyusb) | USB serial และ USB network บน MyOS Pi | MIT |
 | [broadcom-peripherals](https://github.com/adafruit/broadcom-peripherals) | โค้ดบูต, MMU, interrupt ของ Pi | MIT |
+| [lwIP](https://github.com/lwip-tcpip/lwip) | TCP/IP (ping, telnet, SSH, `pkg`) | BSD 3-clause |
+| [Monocypher](https://github.com/LoupVaillant/Monocypher) | การเข้ารหัสของ SSH | BSD 2-clause หรือ CC0 |
 | Raspberry Pi firmware | ไฟล์บูตของ Pi | Broadcom (แจกจ่ายได้) |
+| Wi-Fi firmware (RPi-Distro `firmware-nonfree`) | firmware ของชิป Wi-Fi | Cypress/Broadcom (แจกจ่ายได้) |
 | [Lua](https://github.com/lua/lua) | แพ็กเกจ `lua` | MIT |
 | [QuickJS](https://github.com/bellard/quickjs) | แพ็กเกจ `node` (JavaScript) | MIT |
 | [SQLite](https://www.sqlite.org) | แพ็กเกจ `sqlite3` | Public domain |
 | [BusyBox](https://busybox.net/) (`busybox-static` จาก Alpine Linux) | คำสั่งแบบ Linux บน MyOS Pi | GPL-2.0 |
+
+ซอร์สเหล่านี้ไม่ได้อยู่ใน repo นี้ (`tools/get-deps.ps1` ดาวน์โหลดให้) แต่ละตัวใช้สัญญาอนุญาตของตัวเอง และแพ็กเกจที่ build จากมัน เช่น `busybox.pkg` (GPL-2.0) ก็อยู่ใต้สัญญาอนุญาตนั้นด้วย
+
+## สัญญาอนุญาต
+
+MyOS ใช้สัญญาอนุญาต **MIT** (ดู [`LICENSE`](LICENSE)): นำไปใช้ แก้ไข หรือแจกต่อได้ รวมถึงใช้ในงานเชิงพาณิชย์ ขอแค่คงข้อความลิขสิทธิ์และสัญญาอนุญาตไว้
+
+โค้ดบางส่วนใน `arm/net.c` และ `arm/usb.c` ดัดแปลงจากตัวอย่างของ TinyUSB (MIT) รายละเอียดและข้อความลิขสิทธิ์เดิมอยู่ใน [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)

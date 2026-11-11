@@ -4,6 +4,11 @@
 // and runs the lwIP TCP/IP stack:
 //   Pi = 192.168.7.1, the PC gets 192.168.7.2 from a small DHCP server,
 //   and the name "myos.usb" points at the Pi (DNS server).
+//
+// The TinyUSB <-> lwIP glue (linkoutput_fn, tud_network_recv_cb,
+// tud_network_xmit_cb, the netif and DHCP/DNS set-up) is adapted from
+// TinyUSB's net_lwip_webserver example: Copyright (c) 2020 Peter Lawrence,
+// MIT License - see THIRD-PARTY-NOTICES.md.
 #include <string.h>
 #include "dhserver.h"
 #include "dnserver.h"

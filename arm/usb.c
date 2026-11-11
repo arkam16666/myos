@@ -117,8 +117,9 @@ const uint8_t *tud_descriptor_bos_cb(void) {
 }
 
 // Microsoft OS 2.0 descriptor set: the function starting at interface 2 is
-// compatible with "WINNCM" (Windows' NCM driver). From TinyUSB's
-// net_lwip_webserver example.
+// compatible with "WINNCM" (Windows' NCM driver). Adapted from TinyUSB's
+// net_lwip_webserver example: Copyright (c) 2019 Ha Thach (tinyusb.org),
+// MIT License - see THIRD-PARTY-NOTICES.md.
 static const uint8_t desc_ms_os_20[] = {
     // set header: length, type, Windows version (8.1+), total length
     U16_TO_U8S_LE(0x000A), U16_TO_U8S_LE(MS_OS_20_SET_HEADER_DESCRIPTOR), U32_TO_U8S_LE(0x06030000),
