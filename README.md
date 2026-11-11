@@ -105,10 +105,10 @@ pkg upgrade             อัปเดตแอปที่มีเวอร�
 pkg list                แอปที่อยู่ในเครื่อง
 apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รับ -y, show, purge, full-upgrade)
 ```
-แอปที่มีตอนนี้ (38 ตัว):
-- **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps
-- **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf
-- **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz
+แอปที่มีตอนนี้ (48 ตัว):
+- **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps, chess (หมากรุกกับคอม, เดินแบบ `e2e4`), sudoku, sokoban (เข็นกล่อง 9 ด่าน), invaders
+- **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf, bc (เครื่องคิดเลขเลขยาวไม่จำกัด เหมือน `bc` ของ Linux, `bc -l` มี sin/cos/log), cal (ปฏิทิน มีปี พ.ศ.), sqlite3 (ฐานข้อมูล SQL)
+- **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz, sl (รถไฟ เวลาพิมพ์ `ls` ผิด), neofetch (ข้อมูลเครื่องคู่โลโก้)
 - **ระบบ:** htop (ดู CPU, อุณหภูมิ, หน่วยความจำ, โปรเซส; ลูกศรเลือก, `K` kill, `q` ออก)
 - **โปรแกรม C เดิม:** calc, cdemo, countdown, crashme, fortune, guess, python
 
@@ -116,6 +116,7 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 | แพ็กเกจ | ภาษา | ตัวอย่าง |
 |---|---|---|
 | `lua` | Lua 5.4.7 ตัวจริง (port จาก C) | `lua`, `lua -e "print(2^10)"`, `lua game.lua` |
+| `node` | JavaScript (QuickJS 2026-06-04 ตัวจริง สั่งแบบ Node.js) | `node`, `node -e "console.log(2**10)"`, `node app.js` |
 | `python` | MicroPython (Python 3) | `python`, `python hello.py` |
 | `basic` | BASIC แบบมีเลขบรรทัด | `10 PRINT "HI"` แล้ว `RUN`, `SAVE "a.bas"`, `basic a.bas` |
 | `scheme` | Scheme (Lisp) | `(define (sq x) (* x x))` |
@@ -124,7 +125,21 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 
 ใช้ `edit` เขียนไฟล์โปรแกรมบน Pi ได้เลย เช่น `edit game.lua` แล้วรันด้วย `lua game.lua`
 
-**C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของ Lua เลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
+**JavaScript** (`pkg install node` หรือ `pkg install nodejs`): เครื่องยนต์ QuickJS ของจริง (ES2023+: class, async/await, BigInt, Map/Set, module) กับหน้าบ้านแบบ Node ที่เขียนเอง
+- `node` เปิด REPL (พิมพ์หลายบรรทัดได้, `await` ได้, `.exit` ออก), `node -e "..."`, `node -p "1+2"`, `node app.js a b` (แบบ CommonJS), ไฟล์ `.mjs` หรือที่มี `import` รันเป็น ES module
+- มี `console.log/error/table/time`, `print`, `prompt("ชื่อ? ")` (อ่านบรรทัดจากคีย์บอร์ด), `setTimeout/setInterval`, `process.argv/exit/env`, `require('fs')` (`readFileSync`, `writeFileSync`, `readdirSync`, `existsSync`, `unlinkSync` ...), `path`, `os`, `util`, `events`, `readline`, `assert`, `require('./mylib')` และ `import ... from 'fs'`
+- ไม่มี: เครือข่าย (`http`), `child_process`, `Buffer` (ใช้ `Uint8Array` แทน), โมดูล `std`/`os` ของ qjs (ต้องใช้ Unix), Intl/Temporal; เรียกฟังก์ชันซ้อนลึกได้ราว 3,300 ชั้น
+- โปรแกรมใหญ่ 726 KB (ใหญ่สุดที่ MyOS รับได้คือ 1 MB)
+
+**SQLite** (`pkg install sqlite3`): SQLite 3.54.1 ตัวจริง ไฟล์ฐานข้อมูลเก็บบน MyFS
+```
+sqlite3 shop.db                              เปิด (หรือสร้าง) แล้วพิมพ์ SQL จบด้วย ;
+sqlite3 shop.db "SELECT * FROM fruit"        รันคำสั่งเดียวแล้วออก
+sqlite3 -box shop.db "SELECT ..."            ตารางสวย (หรือ -csv -json -line -column -table)
+```
+คำสั่งจุด: `.tables`, `.schema`, `.mode box`, `.headers on`, `.import data.csv t`, `.dump`, `.read file.sql`, `.output file`, `.once file`, `.open file`, `.timer on`, `.help`, `.quit` ข้อจำกัด: ฐานข้อมูลอยู่ในหน่วยความจำทั้งก้อนและเขียนลงดิสก์ทุกครั้งที่ commit (ไม่มี WAL, ไม่มี lock)
+
+**C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` (+ `clock_gettime`, `gettimeofday`), `inttypes.h`, `fenv.h`, `alloca` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua, QuickJS และ SQLite port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของเขาเลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
 
 ข้อจำกัด: Pi ไม่มีนาฬิกา `os.time()` / `time()` นับจาก 1 ม.ค. 2000 ตอนเปิดเครื่อง, ยังรันคำสั่ง shell จากในโปรแกรมไม่ได้ (`os.execute`)
 
@@ -219,3 +234,6 @@ myos\
 | [TinyUSB](https://github.com/hathach/tinyusb) | USB serial บน MyOS Pi | MIT |
 | [broadcom-peripherals](https://github.com/adafruit/broadcom-peripherals) | โค้ดบูต, MMU, interrupt ของ Pi | MIT |
 | Raspberry Pi firmware | ไฟล์บูตของ Pi | Broadcom (แจกจ่ายได้) |
+| [Lua](https://github.com/lua/lua) | แพ็กเกจ `lua` | MIT |
+| [QuickJS](https://github.com/bellard/quickjs) | แพ็กเกจ `node` (JavaScript) | MIT |
+| [SQLite](https://www.sqlite.org) | แพ็กเกจ `sqlite3` | Public domain |

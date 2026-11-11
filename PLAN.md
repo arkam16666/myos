@@ -143,6 +143,18 @@
   - เสร็จเมื่อ: SSH 2 หน้าต่างพร้อมกันเห็นแค่ของตัวเอง ✅ (ทดสอบบน Pi จริง)
 - [ ] **4.2.5** แบ่งจอแบบ tmux ในหน้าต่างเดียว
 
+### 4.6 แอปและภาษาเพิ่ม (ให้รู้สึกเหมือน Ubuntu)
+- [x] **4.6.1** JavaScript: QuickJS เป็นแพ็กเกจ `node` (`pkg install nodejs` ก็ได้) REPL, `node -e/-p`, `node app.js`, ES module, `require('fs'/'path'/'os'/...)`
+  - เสร็จเมื่อ: `node -e "console.log(1+2)"` ได้ ✅ (tests/qemu_langs.py 17 ข้อ)
+- [x] **4.6.2** `sqlite3`: SQLite 3.54.1 + VFS บน MyFS + shell (`.tables .schema .mode box .import .dump ...`)
+  - เสร็จเมื่อ: สร้างตาราง ปิด เปิดใหม่ ข้อมูลยังอยู่ ✅
+- [x] **4.6.3** `chess` (C): หมากรุกกับคอม (alpha-beta, ตรวจ move generator ด้วย perft)
+- [x] **4.6.4** แอป Python: `bc`, `neofetch`, `cal`, `sl`, `sudoku`, `sokoban`, `invaders`
+- [x] **4.6.5** C library เพิ่ม: `inttypes.h`, `sys/time.h`, `fenv.h`, `clock_gettime`, `alloca`, หาร 128 บิต
+- [ ] **4.6.6** ภาษาเพิ่ม: Tcl (Jim Tcl), Scheme ตัว C, ...
+- [ ] **4.6.7** C compiler บน Pi (TinyCC มี backend ARM64) ให้เขียน C แล้วคอมไพล์บน MyOS ได้
+- [ ] **4.6.8** วันที่จริง: เอาเวลาจากคอมผ่าน USB network (HTTP `Date` / NTP) ให้ `cal`, `date`, `Date()` ถูก
+
 ---
 
 ## ลำดับที่แนะนำ
