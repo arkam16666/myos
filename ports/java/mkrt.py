@@ -48,15 +48,18 @@ def compile_lib(javac, out_dir):
     sources = []
     for root, _, files in os.walk(lib):
         sources += [os.path.join(root, f) for f in files if f.endswith(".java")]
+    # paths relative to lib (javac runs there): the checkout's path may not be
+    # ASCII (the owner's Windows folder is Thai), and javac reads @files in the
+    # system code page
     listfile = os.path.join(out_dir, "sources.txt")
-    with open(listfile, "w") as f:
-        f.write("\n".join('"' + s.replace("\\", "/") + '"' for s in sorted(sources)))
+    with open(listfile, "w", encoding="ascii") as f:
+        f.write("\n".join('"' + os.path.relpath(s, lib).replace("\\", "/") + '"' for s in sorted(sources)))
     classes = os.path.join(out_dir, "classes")
     os.makedirs(classes)
     # our own java.lang etc.: compile against nothing but these sources
-    cmd = [javac, "-source", "8", "-target", "8", "-bootclasspath", "", "-sourcepath", lib, "-encoding", "ascii",
+    cmd = [javac, "-source", "8", "-target", "8", "-bootclasspath", "", "-sourcepath", ".", "-encoding", "ascii",
            "-nowarn", "-Xlint:-options", "-g:source,lines", "-d", classes, "@" + listfile]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=lib)
     if r.returncode:
         sys.stderr.write(r.stdout + r.stderr)
         sys.exit("mkrt: javac failed")

@@ -227,12 +227,14 @@ def prepare_java(tmp):
     for r8 in (True, False):
         d = out[r8] = os.path.join(tmp, "java8" if r8 else "javanew")
         os.makedirs(d)
-        srcs = [os.path.join(src, f) for f, v in release8.items() if v == r8]
+        # paths relative to the tests folder: javac on Windows can't take the
+        # owner's Thai folder name as an argument
+        srcs = [f for f, v in release8.items() if v == r8]
         if r8:
-            srcs += [os.path.join(src, "app", "Main.java"), os.path.join(src, "app", "util", "Greeter.java")]
+            srcs += [os.path.join("app", "Main.java"), os.path.join("app", "util", "Greeter.java")]
         flags = ["--release", "8"] if r8 else []
         subprocess.run([javac, "-nowarn", "-Xlint:-options", "-encoding", "UTF-8"] + flags + ["-d", d] + srcs,
-                       check=True, capture_output=True)
+                       check=True, capture_output=True, cwd=src)
     files = [os.path.join(d, f) for d in out.values() for f in os.listdir(d) if f.endswith(".class")]
     for cmd, r8, typed, expect in JAVA_TESTS:
         words = cmd.split()[1:]
