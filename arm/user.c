@@ -69,10 +69,12 @@ int run_program(const char *name, const char *args, int background) {
     if (pid == -1) return -1;                       // no such file
     if (pid < 0) return 0;                          // (proc_spawn said why)
     if (background) {
+        const char *base = name;                    // "/apps/x" -> "x"
+        for (const char *s = name; *s; s++) if (*s == '/') base = s + 1;
         console_puts("[");
         print_dec((uint64_t)pid);
         console_puts("] ");
-        console_puts(name);
+        console_puts(base);
         console_puts(" is running in the background ('ps' lists, 'fg ");
         print_dec((uint64_t)pid);
         console_puts("' brings it back)\n");

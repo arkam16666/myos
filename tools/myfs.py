@@ -674,7 +674,9 @@ def upgrade(disk):
     """v1 -> v2 in place, the same way as arm/myfs.c myfs_upgrade: no data moves,
     the bitmap and "/" go into free space, sector 0 is written last"""
     sb, entries = load(disk)
-    total = min(sb["total"], disk.total, MAX_SECTORS)
+    total = min(disk.total, MAX_SECTORS)          # the whole image (v1 knew only its old size)
+    if total < sb["total"]:
+        raise FSError("the image is smaller than its v1 file system says; nothing changed")
     files = [e for e in entries if e["flags"] & 1]
     for e in files:
         need = (e["size"] + SECTOR - 1) // SECTOR

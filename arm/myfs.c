@@ -1375,9 +1375,11 @@ const myfs_check_t *myfs_mount_check(void) { return &mount_report; }
 // ---------------------------------------------------------------
 int myfs_upgrade(void) {
     if (mounted != 1) return mounted == 2 ? MYFS_ERR_EXISTS : MYFS_ERR_NOFS;
-    uint32_t tot = rd32(v1_super + 8);
-    if (tot > dev.sectors) tot = dev.sectors;
-    if (tot > MAX_SECTORS || tot < 64) return MYFS_ERR_FULL;
+    // v2 gets the whole myfs.img (v1 only knew the size it was formatted with;
+    // anything after that is unused)
+    uint32_t tot = dev.sectors;
+    if (tot > MAX_SECTORS) tot = MAX_SECTORS;
+    if (tot < rd32(v1_super + 8) || tot < 64) return MYFS_ERR_CORRUPT;
     int list[MYFS_MAX_FILES], n = 0;
     for (int i = 0; i < MYFS_MAX_FILES; i++) {
         if (!v1_used(i)) continue;
