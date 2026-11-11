@@ -158,8 +158,9 @@
   - เสร็จเมื่อ: firmware รัน ✅ (`wifi log`: RTE (SDIO-CDC) 9.88.4.77 on BCM43430 r2)
 - [x] **4.7.3** ช่องคำสั่ง BCDC/ioctl: เวอร์ชัน firmware, MAC, `wifi scan` (ชื่อ/สัญญาณ/ช่อง/ความปลอดภัย)
   - เสร็จเมื่อ: Pi จริงสแกนเจอเครือข่ายรอบบ้าน ✅ (5-6 เครือข่าย, WPA2, ช่อง 1-11)
-- [ ] **4.7.4** เข้า WPA2-PSK ด้วย supplicant ในชิป, frame ข้อมูลเป็น netif ที่สองของ lwIP, DHCP client, `ping` (ทดสอบแล้ว: auth/assoc/link ผ่าน, รหัสผิดถูกจับได้; ยังไม่ได้ทดสอบกับรหัสที่ถูก)
-- [ ] **4.7.5** คำสั่ง `wifi` ครบ (scan/connect/status/disconnect/forget), จำเครือข่ายใน `wifi.cfg`, ต่อเองตอนบูต, แอป `wifiman` เต็มจอ (ทดสอบบน Pi จริงแล้ว: scan, forget, ต่อเองตอนบูต, wifiman; เหลือ connect ที่สำเร็จจริง)
+- [x] **4.7.4** เข้า WPA2-PSK ด้วย supplicant ในชิป, frame ข้อมูลเป็น netif ที่สองของ lwIP, DHCP client, `ping`
+  - เสร็จเมื่อ: Pi จริงต่อ WPA2 บ้านได้ ✅ (DHCP ได้ IP, ping router 2 ms, ping 8.8.8.8 9 ms, SSH จากคอมผ่าน Wi-Fi ได้)
+- [x] **4.7.5** คำสั่ง `wifi` ครบ (scan/connect/status/disconnect/forget), จำเครือข่ายใน `wifi.cfg`, ต่อเองตอนบูต, แอป `wifiman` เต็มจอ (ทดสอบบน Pi จริงแล้ว: scan, connect, forget, ต่อเองตอนบูต, wifiman)
 - [ ] **4.7.6** SDIO 50 MHz (high speed: ตอนนี้เขียนแล้ว CRC ผิด จึงใช้ 25 MHz), Wi-Fi บน Pi 4
 
 ### 4.6 แอปและภาษาเพิ่ม (ให้รู้สึกเหมือน Ubuntu)
