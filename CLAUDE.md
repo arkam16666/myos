@@ -26,7 +26,8 @@ pwsh arm/build.ps1 -NoRun -Pi4     # Pi 4 variant (overwrites the same output na
 Test suites (from the repo root; set `PYTHONIOENCODING=utf-8`, the Thai path on Windows crashes output otherwise):
 - `python tests/qemu_arm.py` – shell, SD/MyFS, programs, pkg/apt, Python, update protocol, panic, Pi 3B + Pi 4B
 - `python tests/qemu_apps.py [APP ...]` – every `apps/py` app driven with scripted keys
-- `python tests/qemu_langs.py [LANG ...]` – lua, basic, scheme, forth, node, sqlite3, chess
+- `python tests/qemu_langs.py [LANG ...]` – lua, basic, scheme, forth, node, npm (offline, with .tgz files made at test time), sqlite3, chess
+- `python tests/host/npm_host_test.py [--net]` – on the PC: npm's gunzip/SHA/JSON scan (gcc) and semver/tar logic (PC node); `--net` runs npm.js against the real registry with curl
 - `python tests/qemu_multi.py` – multitasking (`&`, ps, kill, fg, Ctrl+C, memory isolation)
 - `python tests/qemu_fs.py [A B C D E]` – MyFS v2: folders, 500 files, reclaim, v1 → v2 upgrade, fragmentation, repair at mount
 - `python tests/qemu_linux.py` – Linux programs: ELF loader + syscalls (`tests/linux/lxtest.c`), BusyBox applets, sh, vi, signals, /proc
@@ -76,7 +77,7 @@ Plugged in by USB it is a serial port (USB ID 1209:0001; `COMn` on Windows, `/de
 
 - `csdk/`: `crt0.c`, minimal `libc.c`, and with `-DMYOS_LIBC` a full C library (`csdk/include`, `csdk/libc`: stdio on MyFS with whole files kept in memory, malloc over both heap regions, printf with floats, strtod, setjmp, time/`clock_gettime`, folders via `dirent.h`/`sys/stat.h`/`unistd.h`, 128-bit integer division in `int128.c`, math from MicroPython's libm). There is no 128-bit `long double` runtime, so avoid `long double`.
 - `packages/*.c`: small C programs (calc, chess, ...) built for both architectures.
-- `ports/NAME/NAME.info` + `$ports` in `arm/build.ps1`: unmodified third-party C programs built against the full libc, with per-port flags in the `$ports` entry: Lua 5.4, QuickJS as `node` (own Node-like front end in `ports/node/`, `-Os` to stay under 1 MB, runs on a 3 MB stack taken from the heap), SQLite as `sqlite3` (own shell and a MyFS VFS: the database is held in memory and written back on commit).
+- `ports/NAME/NAME.info` + `$ports` in `arm/build.ps1`: unmodified third-party C programs built against the full libc, with per-port flags in the `$ports` entry: Lua 5.4, QuickJS as `node` (own Node-like front end in `ports/node/`, `-Os` to stay under 1 MB, runs on a 3 MB stack taken from the heap; `require` resolves `node_modules` the Node way in `prelude.js`) and again with `-DNODE_NPM` as `npm` (`ports/npm/npm.js` embedded; native helpers in `ports/node/npmlib.c`: inflate, SHA-512/SHA-1, JSON scan), SQLite as `sqlite3` (own shell and a MyFS VFS: the database is held in memory and written back on commit).
 - `tests/linux/*.c`: raw-syscall Linux test programs (`clang --target=aarch64-linux-gnu -nostdlib -static`) → `arm/build/linux/`.
 - `python/`: MicroPython port (`make ARCH=arm64` → `build-arm64`); `modmyos.c` is the `myos` module (`key`, `getkey`, `clear`, `move`, `cursor`, `ticks`, `procs`, `sysinfo`, `kill`, `wifi_*`); `file.c` provides `open`/`os` (`listdir(path)`, `remove`, `mkdir`, `rmdir`, `rename`, `stat`, `chdir`, `getcwd`). Bump `python/python.info` version when the port changes so `pkg upgrade` picks it up.
 - `apps/py/*.py`: Python apps (incl. `htop`, `wifiman`); metadata from `# @version` / `# @description` (≤ 43 ASCII chars) comment lines. New apps also need an entry in `tests/qemu_apps.py`.

@@ -4,11 +4,14 @@ Installs each language from its package and runs small programs in it.
 
 usage: python tests/qemu_langs.py [LANG ...]
 """
+import io
+import json
 import os
 import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 
@@ -104,6 +107,37 @@ TESTS = {
                   "nope()", ".exit"],
          ["Welcome to JavaScript", "43", "[ 42, 84 ]", '"done"', "Uncaught ReferenceError"]),
     ],
+    # npm with package files made by npm_files() below (QEMU has no network)
+    "npm": [
+        ("pkg install node", [], []),
+        ("npm init -y", [], ['"name": "my-project"', "Wrote to /package.json"]),
+        ("npm install /dep-pkg-1.0.0.tgz", [], ["+ dep-pkg@1.0.0", "added 1 package"]),
+        ("npm install mytest-pkg-1.2.3.tgz", [], ["+ mytest-pkg@1.2.3", "skipped lib/" + "x" * 64, "added 1 package"]),
+        ("node -e \"console.log(require('mytest-pkg').hi('bob'), require('mytest-pkg/lib/data.json').v)\"", [],
+         ["[hi bob v3] 3"]),
+        ("mkdir sub", [], []),
+        ("node -e \"require('fs').writeFileSync('sub/t.js', 'console.log(require(`mytest-pkg`).hi(__dirname))')\"", [], []),
+        ("node sub/t.js", [], ["[hi /sub v3]"]),
+        ("npm install /esm-pkg-2.0.0.tgz", [], ["+ esm-pkg@2.0.0"]),
+        ("node -e \"const e = require('esm-pkg'); console.log(e.twice(21), e.default)\"", [], ["42 esm"]),
+        ("node -e \"const q = JSON.stringify; require('fs').writeFileSync('sub/m.mjs', 'import { twice } from ' + q('esm-pkg') +"
+         " '; import mt, { hi } from ' + q('mytest-pkg') + '; console.log(twice(5), hi(`x`), typeof mt.hi)')\"", [], []),
+        ("node sub/m.mjs", [], ["10 [hi x v3] function"]),
+        ("npm ls", [], ["my-project@1.0.0 /", "dep-pkg@1.0.0", "esm-pkg@2.0.0", "mytest-pkg@1.2.3"]),
+        ("npm ls --all", [], ["└─┬ mytest-pkg@1.2.3", "  └── dep-pkg@1.0.0 deduped"]),
+        ("cat package.json", [], ['"mytest-pkg": "file:mytest-pkg-1.2.3.tgz"', '"dep-pkg": "file:dep-pkg-1.0.0.tgz"']),
+        ("npm install /addon-pkg-1.0.0.tgz", [], ["npm error addon-pkg@1.0.0 needs a C++ build"]),
+        ("npm install left-pad", [], ["npm error no network: Wi-Fi not connected? try 'wifi'"]),
+        ("npm uninstall mytest-pkg", [], ["removed 1 package"]),
+        ("node -e \"require('mytest-pkg')\"", [], ["Cannot find module 'mytest-pkg'"]),
+        ("node -e \"require('fs').rmSync('node_modules', { recursive: true }); console.log(require('fs').existsSync('node_modules'))\"",
+         [], ["false"]),
+        ("npm install", [], ["+ dep-pkg@1.0.0", "+ esm-pkg@2.0.0", "added 2 packages"]),
+        ("npm ls", [], ["dep-pkg@1.0.0", "esm-pkg@2.0.0"]),
+        ("npm view left-pad", [], ["npm error no network"]),
+        ("node -e \"const c = require('crypto'); console.log(c.createHash('sha512').update('abc').digest('base64').slice(0, 12),"
+         " c.createHash('sha1').update('a').update('bc').digest('hex'))\"", [], ["3a81oZNherrM a9993e364706816aba3e25717850c26c9cd0d89d"]),
+    ],
     "sqlite3": [
         ("sqlite3 shop.db \"CREATE TABLE fruit(id INTEGER PRIMARY KEY, name TEXT, price REAL)\""
          " \"INSERT INTO fruit(name, price) VALUES ('apple', 1.5), ('banana', 0.25), ('mango', 3)\"", [], []),
@@ -125,11 +159,40 @@ TESTS = {
 }
 
 
+def npm_files(tmp):
+    """small npm package files (.tgz, laid out like 'npm pack' makes them) for the npm test"""
+    def pack(name, version, files, **meta):
+        out = os.path.join(tmp, f"{name}-{version}.tgz")
+        with tarfile.open(out, "w:gz") as t:
+            for fname, data in [("package.json", json.dumps({"name": name, "version": version, **meta})), *files.items()]:
+                data = data.encode()
+                ti = tarfile.TarInfo("package/" + fname)
+                ti.size = len(data)
+                t.addfile(ti, io.BytesIO(data))
+        return out
+    return [
+        pack("dep-pkg", "1.0.0", {"index.js": "module.exports = (s) => '[' + s + ']';"}),
+        pack("mytest-pkg", "1.2.3", {
+            "lib/main.js": "const dep = require('dep-pkg'); const data = require('./data.json');\n"
+                           "exports.hi = (n) => dep('hi ' + n + ' v' + data.v);\n",
+            "lib/data.json": '{"v": 3}',
+            "lib/" + "x" * 64 + ".js": "// a name too long for MyFS",
+        }, main="lib/main.js", dependencies={"dep-pkg": "^1.0.0"}),
+        pack("esm-pkg", "2.0.0", {"index.js": "export const twice = (x) => x * 2;\nexport default 'esm';\n"},
+             type="module", exports={".": {"import": "./index.js"}}),
+        pack("addon-pkg", "1.0.0", {"binding.gyp": "{}", "index.js": ""}),
+    ]
+
+
 def main():
     only = sys.argv[1:]
     tmp = tempfile.mkdtemp(prefix="myos-langtest-")
     langs = [n for n in TESTS if not only or n in only]
     files = []
+    if "npm" in langs:                              # npm's test needs node and the package files
+        files += npm_files(tmp)
+        if "node" not in langs:
+            files.append(os.path.join(ROOT, "arm", "build", "packages", "node.pkg"))
     for n in langs:
         port = os.path.join(ROOT, "arm", "build", "packages", n + ".pkg")
         if os.path.exists(port):

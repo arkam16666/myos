@@ -1,7 +1,9 @@
 // prelude.js - the JavaScript half of 'node' on MyOS (built into the program).
 // node.c runs this once at start-up and calls the function with N, the native
-// helpers: write, inspect, readFile, writeFile, fileSize, unlink, list,
-// evalScript, readLine, setTimer, clearTimer, exit, ticks, sysinfo, heap, gc.
+// helpers: write, inspect, readFile, writeFile, fileSize, unlink, stat, readdir,
+// mkdir, rmdir, chdir, rename, cwd, evalScript, evalModule, detectModule,
+// readLine, setTimer, clearTimer, exit, ticks, sysinfo, heap, gc (and for npm:
+// fetch, gunzip, hash, text, jsonPick).
 (function (N) {
 "use strict";
 const g = globalThis;
@@ -52,6 +54,10 @@ const util = {
     isDeepStrictEqual: (a, b) => inspect(a, { depth: 20 }) === inspect(b, { depth: 20 }),
     promisify: (fn) => (...a) => new Promise((ok, bad) => fn(...a, (err, v) => (err ? bad(err) : ok(v)))),
     types: { isPromise: (v) => v instanceof Promise, isDate: (v) => v instanceof Date, isRegExp: (v) => v instanceof RegExp },
+    // what npm packages often use
+    inherits: (c, p) => { Object.setPrototypeOf(c.prototype, p.prototype); Object.setPrototypeOf(c, p); c.super_ = p; },
+    deprecate: (fn) => fn,
+    debuglog: () => () => {},
 };
 
 // ---------------------------------------------------------------- console
@@ -120,7 +126,7 @@ if (!g.queueMicrotask) define(g, "queueMicrotask", (fn) => { Promise.resolve().t
 if (!g.structuredClone) define(g, "structuredClone", (v) => JSON.parse(JSON.stringify(v)));
 define(g, "performance", { now: () => now(), timeOrigin: 0 });
 
-// ---------------------------------------------------------------- path (MyFS has no folders)
+// ---------------------------------------------------------------- path (folders on MyFS v2)
 const path = {
     sep: "/", delimiter: ":",
     basename(p, ext) {
@@ -149,12 +155,17 @@ const path = {
     },
     join: (...a) => path.normalize(a.filter((x) => x !== "").join("/")),
     resolve: (...a) => {
-        let p = "";
-        for (const s of a) p = String(s).startsWith("/") ? s : p + "/" + s;
+        let p = N.cwd();
+        for (const s of a) if (s !== "") p = String(s).startsWith("/") ? s : p + "/" + s;
         return path.normalize("/" + p);
     },
     isAbsolute: (p) => String(p).startsWith("/"),
-    relative: (from, to) => path.normalize(to).replace(/^\//, ""),
+    relative(from, to) {
+        const f = path.resolve(from).split("/").filter(Boolean), t = path.resolve(to).split("/").filter(Boolean);
+        let i = 0;
+        while (i < f.length && i < t.length && f[i] === t[i]) i++;
+        return [...f.slice(i).map(() => ".."), ...t.slice(i)].join("/");
+    },
     parse(p) {
         const base = path.basename(p), ext = path.extname(p);
         return { root: p.startsWith("/") ? "/" : "", dir: path.dirname(p), base, ext, name: ext ? base.slice(0, -ext.length) : base };
@@ -162,26 +173,42 @@ const path = {
 };
 path.posix = path;
 
-// ---------------------------------------------------------------- fs (MyFS: one flat folder)
+// ---------------------------------------------------------------- fs (MyFS; folders need MyFS v2)
 function fsError(code, msg, name) {
     const e = new Error(code + ": " + msg + ", '" + name + "'");
     e.code = code;
     e.path = name;
     return e;
 }
+// MYOS_E* numbers from the folder calls -> Node error codes
+const ERRS = { "-3": "ENOENT", "-4": "ENOSPC", "-5": "EINVAL", "-6": "EEXIST", "-7": "ENOTDIR", "-8": "EISDIR", "-9": "ENOTEMPTY" };
+function check(r, what, name) {
+    if (typeof r !== "number" || r >= 0) return r;
+    if (r === -10) throw fsError("ENOSYS", "MyFS v1 has no folders (type 'fsupgrade' first), " + what, name);
+    throw fsError(ERRS[r] || "EIO", "failed (MyOS error " + r + "), " + what, name);
+}
 function wantText(opt) {
     return typeof opt === "string" || (opt && typeof opt.encoding === "string");
 }
 class Stats {
-    constructor(size) { this.size = size; this.mtime = new Date(0); this.mode = 0o100644; }
-    isFile() { return true; }
-    isDirectory() { return false; }
+    constructor(s) { this.size = s.size; this.mtime = new Date(0); this.mode = s.type === 2 ? 0o40755 : 0o100644; this._d = s.type === 2; }
+    isFile() { return !this._d; }
+    isDirectory() { return this._d; }
     isSymbolicLink() { return false; }
 }
+class Dirent {
+    constructor(name, type) { this.name = name; this._d = type === 2; }
+    isFile() { return !this._d; }
+    isDirectory() { return this._d; }
+    isSymbolicLink() { return false; }
+}
+const isDir = (p) => { const s = N.stat(String(p)); return !!s && s.type === 2; };
+const isFile = (p) => { const s = N.stat(String(p)); return !!s && s.type === 1; };
 const fs = {
     // text if an encoding is given; without one Node gives a Buffer - here a
     // Uint8Array that turns into the text with toString()
     readFileSync(name, opt) {
+        if (isDir(name)) throw fsError("EISDIR", "illegal operation on a directory, read", name);
         if (N.fileSize(name) < 0) throw fsError("ENOENT", "no such file or directory, open", name);
         if (wantText(opt)) return N.readFile(name, false);
         const b = N.readFile(name, true);
@@ -190,29 +217,42 @@ const fs = {
     },
     writeFileSync(name, data) { N.writeFile(name, typeof data === "string" || ArrayBuffer.isView(data) || data instanceof ArrayBuffer ? data : String(data), false); },
     appendFileSync(name, data) { N.writeFile(name, typeof data === "string" || ArrayBuffer.isView(data) ? data : String(data), true); },
-    existsSync: (name) => name === "." || name === "/" || N.fileSize(name) >= 0,
+    existsSync: (name) => name === "." || name === "/" || !!N.stat(String(name)),
     unlinkSync(name) {
-        if (N.fileSize(name) < 0) throw fsError("ENOENT", "no such file or directory, unlink", name);
+        if (N.fileSize(name) < 0) throw fsError(isDir(name) ? "EISDIR" : "ENOENT", "no such file, unlink", name);
         N.unlink(name);
     },
     rmSync(name, opt) {
-        if (N.fileSize(name) >= 0) N.unlink(name);
-        else if (!(opt && opt.force)) throw fsError("ENOENT", "no such file or directory, rm", name);
+        const s = N.stat(String(name));
+        if (!s) { if (opt && opt.force) return; throw fsError("ENOENT", "no such file or directory, rm", name); }
+        if (s.type === 1) return N.unlink(name);
+        if (!(opt && opt.recursive)) throw fsError("EISDIR", "is a directory (use { recursive: true }), rm", name);
+        for (const [n] of check(N.readdir(name), "rm", name)) fs.rmSync(name + "/" + n, opt);
+        check(N.rmdir(name), "rm", name);
     },
-    renameSync(from, to) {
-        const data = N.readFile(from, true);
-        N.writeFile(to, data, false);
-        N.unlink(from);
-    },
+    rmdirSync(name, opt) { if (opt && opt.recursive) fs.rmSync(name, opt); else check(N.rmdir(name), "rmdir", name); },
+    renameSync(from, to) { check(N.rename(from, to), "rename", from); },
     copyFileSync(from, to) { N.writeFile(to, N.readFile(from, true), false); },
-    readdirSync: () => N.list().sort(),
-    statSync(name) {
-        if (name === "." || name === "/") { const s = new Stats(0); s.isFile = () => false; s.isDirectory = () => true; return s; }
-        const n = N.fileSize(name);
-        if (n < 0) throw fsError("ENOENT", "no such file or directory, stat", name);
-        return new Stats(n);
+    readdirSync(name = ".", opt) {
+        const l = check(N.readdir(name), "scandir", name).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+        return opt && opt.withFileTypes ? l.map((e) => new Dirent(e[0], e[1])) : l.map((e) => e[0]);
     },
-    mkdirSync() { throw fsError("ENOSYS", "MyFS has no folders", "mkdir"); },
+    statSync(name, opt) {
+        const s = name === "." || name === "/" ? { type: 2, size: 0 } : N.stat(String(name));
+        if (!s) {
+            if (opt && opt.throwIfNoEntry === false) return undefined;
+            throw fsError("ENOENT", "no such file or directory, stat", name);
+        }
+        return new Stats(s);
+    },
+    mkdirSync(name, opt) {
+        if (!(opt && opt.recursive)) return void check(N.mkdir(name), "mkdir", name);
+        let p = String(name).startsWith("/") ? "" : ".";
+        for (const part of String(name).split("/").filter(Boolean)) {
+            p += "/" + part;
+            if (!isDir(p)) check(N.mkdir(p), "mkdir", name);
+        }
+    },
 };
 fs.lstatSync = fs.statSync;
 // the callback and promise versions on top of the ones above
@@ -264,8 +304,8 @@ const process = {
     release: { name: "quickjs" },
     exitCode: undefined,
     exit: (code) => { N.exit(code === undefined ? process.exitCode || 0 : code); },
-    cwd: () => "/",
-    chdir: () => {},
+    cwd: () => N.cwd(),
+    chdir: (d) => { check(N.chdir(String(d)), "chdir", d); },
     uptime: () => N.ticks() / 100,
     hrtime: Object.assign((prev) => {
         const ms = now(), t = [Math.floor(ms / 1000), (ms % 1000) * 1e6];
@@ -328,75 +368,226 @@ const assert = (() => {
     return a;
 })();
 
-const builtins = { fs, path, os, util, events, readline, assert, process, "fs/promises": fsPromises, "assert/strict": assert, "readline/promises": readline };
+const tty = { isatty: (fd) => fd <= 2 };
+// crypto: SHA-1 / SHA-512 hashes (npm's); no random numbers (MyOS has no secure source for programs yet)
+const crypto = {
+    createHash(alg) {
+        alg = String(alg).toLowerCase().replace("-", "");
+        if (alg !== "sha1" && alg !== "sha512") throw new Error("crypto.createHash: MyOS has sha1 and sha512 only, not " + alg);
+        const parts = [];
+        const h = {
+            update(d) { parts.push(typeof d === "string" ? N.bytes(d) : d instanceof ArrayBuffer ? new Uint8Array(d) : d); return h; },
+            digest(enc) {
+                const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+                parts.reduce((at, p) => (all.set(p, at), at + p.length), 0);
+                const hex = N.hash(alg, all);
+                if (enc === "hex") return hex;
+                const raw = Uint8Array.from(hex.match(/../g), (x) => parseInt(x, 16));
+                if (enc !== "base64") return raw;
+                const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                let s = "";
+                for (let i = 0; i < raw.length; i += 3) {
+                    const v = (raw[i] << 16) | ((raw[i + 1] || 0) << 8) | (raw[i + 2] || 0);
+                    s += A[v >> 18] + A[(v >> 12) & 63] + (i + 1 < raw.length ? A[(v >> 6) & 63] : "=") + (i + 2 < raw.length ? A[v & 63] : "=");
+                }
+                return s;
+            },
+        };
+        return h;
+    },
+    getHashes: () => ["sha1", "sha512"],
+};
+for (const f of ["randomBytes", "randomFillSync", "randomUUID", "getRandomValues", "randomInt"])
+    crypto[f] = () => { throw new Error("crypto." + f + ": MyOS has no secure random numbers for programs yet"); };
+const builtins = { fs, path, os, util, events, readline, assert, process, tty, crypto, "fs/promises": fsPromises, "assert/strict": assert, "readline/promises": readline };
 const cache = {};
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+let mainModule;
 
-function loadFile(name) {
-    for (const n of [name, name + ".js", name + ".json"]) {
-        if (N.fileSize(n) >= 0) return n;
+function readJSON(p) {
+    try { return JSON.parse(N.readFile(p, false)); } catch (e) { return null; }
+}
+function notFound(id, from) {
+    const e = new Error("Cannot find module '" + id + "'" + (from ? " (from " + from + ")" : ""));
+    e.code = "MODULE_NOT_FOUND";
+    return e;
+}
+
+// Node's way to find a module: ./x as x, x.js, x.json, x.cjs, x.mjs or a folder
+// (package.json "main", index.js); a package name in node_modules folders from
+// the requiring file's folder up to /, honouring package.json "exports"
+function asFile(p) {
+    for (const e of ["", ".js", ".json", ".cjs", ".mjs"]) if (isFile(p + e)) return p + e;
+    return null;
+}
+function asIndex(p) {
+    for (const e of ["/index.js", "/index.json", "/index.cjs", "/index.mjs"]) if (isFile(p + e)) return p + e;
+    return null;
+}
+function asDir(p) {
+    if (!isDir(p)) return null;
+    const pj = readJSON(p + "/package.json");
+    if (pj && typeof pj.main === "string" && pj.main) {
+        const m = path.join(p, pj.main), f = asFile(m) || asIndex(m);
+        if (f) return f;
+    }
+    return asIndex(p);
+}
+function target(t, conds) {                     // an "exports" value -> a path, by conditions
+    if (typeof t === "string") return t;
+    if (Array.isArray(t)) {
+        for (const x of t) { const r = target(x, conds); if (r) return r; }
+    } else if (t && typeof t === "object") {
+        for (const k of Object.keys(t)) {
+            if (k !== "default" && !conds.includes(k)) continue;
+            const r = target(t[k], conds);
+            if (r) return r;
+        }
     }
     return null;
 }
+function viaExports(dir, ex, sub, conds) {
+    if (typeof ex === "string" || Array.isArray(ex) || !Object.keys(ex).some((k) => k.startsWith("."))) ex = { ".": ex };
+    if (has(ex, sub)) {
+        const t = target(ex[sub], conds);
+        return t ? path.join(dir, t) : null;
+    }
+    for (const k of Object.keys(ex)) {          // "./*": "./lib/*.js"
+        const star = k.indexOf("*"), pre = k.slice(0, star), post = k.slice(star + 1);
+        if (star < 0 || sub.length < k.length - 1 || !sub.startsWith(pre) || !sub.endsWith(post)) continue;
+        const t = target(ex[k], conds);
+        return t ? path.join(dir, t.split("*").join(sub.slice(pre.length, sub.length - post.length))) : null;
+    }
+    return null;
+}
+const REQ = ["require", "node", "default"], IMP = ["import", "node", "default"];
+function fromNodeModules(id, dir, condsList) {
+    const parts = id.split("/"), n = id.startsWith("@") ? 2 : 1;
+    const name = parts.slice(0, n).join("/"), sub = parts.slice(n).join("/");
+    for (let d = dir; ; d = path.dirname(d)) {
+        const pkg = path.join(d, "node_modules", name);
+        if (path.basename(d) !== "node_modules" && isDir(pkg)) {
+            const pj = readJSON(pkg + "/package.json");
+            if (pj && pj.exports && (typeof pj.exports === "object" || typeof pj.exports === "string")) {
+                for (const conds of condsList) {
+                    const f = viaExports(pkg, pj.exports, sub ? "./" + sub : ".", conds);
+                    if (f && isFile(f)) return f;
+                }
+            }
+            const p = sub ? path.join(pkg, sub) : pkg;
+            return asFile(p) || asDir(p);
+        }
+        if (d === "/") return null;
+    }
+}
+// -> a builtin's name ("fs") or a file's full path ("/app/node_modules/x/index.js")
+function resolve(id, dir, esm, from) {
+    const bare = id.startsWith("node:") ? id.slice(5) : id;
+    if (has(builtins, bare)) return bare;
+    let f;
+    if (/^\.{0,2}\//.test(id) || id === "." || id === "..") {
+        const p = path.resolve(dir, id);
+        f = asFile(p) || asDir(p);
+    } else {
+        f = fromNodeModules(id, path.resolve(dir), esm ? [IMP, REQ] : [REQ, IMP]) ||
+            asFile(path.resolve(dir, id));      // (MyOS: require('lib') also finds ./lib.js)
+    }
+    if (!f) throw notFound(id, from);
+    if (f.endsWith(".node")) throw new Error("'" + id + "' is a native addon (C++): not supported on MyOS");
+    return f;
+}
 
-function makeRequire(from) {
+// ES module or CommonJS? .mjs/.cjs, then the nearest package.json "type", then the code itself
+function isESM(file, src) {
+    if (file.endsWith(".mjs")) return true;
+    if (file.endsWith(".cjs") || file.endsWith(".json")) return false;
+    for (let d = path.dirname(file); ; d = path.dirname(d)) {
+        const pj = isFile(d + "/package.json") && readJSON(d + "/package.json");
+        if (pj && pj.type === "module") return true;
+        if (pj && pj.type === "commonjs") return false;
+        if (pj || d === "/") break;
+    }
+    return N.detectModule(src);
+}
+
+function load(file, parent) {
+    if (cache[file]) return cache[file].exports;
+    const module = { id: file, filename: file, exports: {}, loaded: false, children: [], paths: [], parent };
+    cache[file] = module;
+    try {
+        if (file.endsWith(".json")) module.exports = JSON.parse(N.readFile(file, false));
+        else {
+            const src = N.readFile(file, false);
+            if (isESM(file, src)) {             // require() of an ES module (like Node 22): its namespace
+                N.evalModule("import * as ns from " + JSON.stringify(file) + "; __myos_hooks.ns = ns;", "<require>");
+                module.exports = hooks.ns;
+                hooks.ns = undefined;
+            } else {
+                runCommonJS(module, src);
+            }
+        }
+    } catch (e) {
+        delete cache[file];
+        throw e;
+    }
+    module.loaded = true;
+    return module.exports;
+}
+
+function makeRequire(parent) {
+    const dir = () => (parent ? path.dirname(parent.filename) : N.cwd());
     const req = (id) => {
-        id = String(id);
-        const bare = id.startsWith("node:") ? id.slice(5) : id;
-        if (Object.prototype.hasOwnProperty.call(builtins, bare)) return builtins[bare];
-        const file = loadFile(path.normalize(id).replace(/^\//, ""));
-        if (!file) {
-            const e = new Error("Cannot find module '" + id + "'" + (from ? " (from " + from + ")" : ""));
-            e.code = "MODULE_NOT_FOUND";
-            throw e;
-        }
-        if (cache[file]) return cache[file].exports;
-        const module = { id: file, filename: file, exports: {}, loaded: false, children: [], paths: [] };
-        cache[file] = module;
-        try {
-            if (file.endsWith(".json")) module.exports = JSON.parse(N.readFile(file, false));
-            else runCommonJS(module);
-        } catch (e) {
-            delete cache[file];
-            throw e;
-        }
-        module.loaded = true;
-        return module.exports;
+        const f = resolve(String(id), dir(), false, parent && parent.filename);
+        return f[0] === "/" ? load(f, parent) : builtins[f];
     };
     req.cache = cache;
-    req.resolve = (id) => loadFile(id) || id;
-    req.main = undefined;
+    req.resolve = (id) => resolve(String(id), dir(), false, parent && parent.filename);
+    req.main = mainModule;
     return req;
 }
 
 // Node's module wrapper; kept on the first line so line numbers stay right
-function runCommonJS(module) {
-    let src = N.readFile(module.filename, false);
+function runCommonJS(module, src) {
+    if (src === undefined) src = N.readFile(module.filename, false);
     if (src.startsWith("#!")) src = "//" + src;
     const fn = N.evalScript("(function (exports, require, module, __filename, __dirname) {" + src + NL + "})", module.filename);
-    const req = makeRequire(module.filename);
+    const req = makeRequire(module);
     module.require = req;
-    fn.call(module.exports, module.exports, req, module, module.filename, "/");
+    fn.call(module.exports, module.exports, req, module, module.filename, path.dirname(module.filename));
+}
+
+// import of a builtin or a CommonJS file: an ES module with its keys as named exports
+const RESERVED = new Set(("break case catch class const continue debugger default delete do else enum export extends false " +
+    "finally for function if import in instanceof new null return super switch this throw true try typeof var void while " +
+    "with yield let static implements interface package private protected public await arguments eval").split(" "));
+function wrapperSource(expr, m) {
+    const names = m && (typeof m === "object" || typeof m === "function")
+        ? Object.keys(m).filter((k) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) && !RESERVED.has(k)) : [];
+    return "const m = " + expr + "; export default m;" + (names.length ? " export const {" + names.join(", ") + "} = m;" : "");
 }
 
 define(g, "require", makeRequire(null));
 define(g, "global", g);
-define(g, "__myos_hooks", {
+const hooks = {
     runMain(name) {
-        const module = { id: ".", filename: name, exports: {}, loaded: false, children: [], paths: [] };
-        cache[name] = module;
-        g.require.main = module;
+        const file = path.resolve(name);
+        const module = { id: ".", filename: file, exports: {}, loaded: false, children: [], paths: [] };
+        cache[file] = module;
+        mainModule = g.require.main = module;
         runCommonJS(module);
         module.loaded = true;
     },
-    // import fs from 'fs' / import { readFileSync } from 'node:fs'
-    builtinModuleSource(id) {
-        const bare = id.startsWith("node:") ? id.slice(5) : id;
-        if (!Object.prototype.hasOwnProperty.call(builtins, bare)) return undefined;
-        const m = builtins[bare];
-        const names = Object.keys(m).filter((k) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) && k !== "default");
-        return "const m = require(" + JSON.stringify(bare) + "); export default m;" +
-               (names.length ? " export const {" + names.join(", ") + "} = m;" : "");
+    // import x from 'id' in module 'base' -> the name module_loader gets
+    resolveImport(id, base) {
+        const dir = base[0] === "<" || base[0] === "[" ? N.cwd() : path.dirname(path.resolve(base));
+        return resolve(id, dir, true, base);
     },
-    jsonModuleSource: (v) => "export default " + JSON.stringify(v) + ";",
-});
+    moduleSource(name) {
+        if (name[0] !== "/") return wrapperSource("require(" + JSON.stringify(name) + ")", builtins[name]);
+        if (name.endsWith(".json")) return "export default " + N.readFile(name, false) + ";";
+        const src = N.readFile(name, false);
+        return isESM(name, src) ? src : wrapperSource("require(" + JSON.stringify(name) + ")", load(name, null));
+    },
+};
+define(g, "__myos_hooks", hooks);
 })

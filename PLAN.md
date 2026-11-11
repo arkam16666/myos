@@ -176,6 +176,8 @@
 - [ ] **4.6.8** วันที่จริง: เอาเวลาจากคอมผ่าน USB network (HTTP `Date` / NTP) ให้ `cal`, `date`, `Date()` ถูก
 - [x] **4.6.9** pkg จากอินเทอร์เน็ต: DNS (lwIP), HTTPS (TLS 1.3 เขียนเอง: X25519 + ChaCha20-Poly1305), คลังแอปบน GitHub (branch packages) เซ็นด้วย Ed25519
   - เสร็จเมื่อ: Pi ต่อ Wi-Fi แล้ว pkg update / pkg install ดึงจาก GitHub ได้โดยไม่ต้องเปิดคอม ✅ (ลายเซ็นผ่าน, node 728 KB)
+- [x] **4.6.10** `npm`: ลงแพ็กเกจ JavaScript ล้วนจาก registry.npmjs.org ลง `node_modules` (semver ^ ~ x >= ||, dependency ซ้อน, ตรวจ sha512, gunzip + tar เขียนเอง, `npm install/ls/uninstall/view/init/run`), `require()` หา `node_modules` แบบ Node (`main`/`exports`, ES module ด้วย)
+  - เสร็จเมื่อ: `npm install left-pad` แล้ว `require('left-pad')` ได้ (QEMU: ไฟล์ .tgz ✅ tests/qemu_langs.py npm 24 ข้อ; registry จริงผ่าน TLS 1.2 รอทดสอบบน Pi)
 
 ### 4.8 โปรแกรม Linux บน Pi (เป้าหมาย: แอปจาก apt)
 แอปใน `.deb` คือโปรแกรม Linux จึงให้ MyOS รันไฟล์ ELF ของ Linux ได้โดยจำลอง system call ของ Linux (`arm\linux.c`)
