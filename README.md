@@ -71,9 +71,9 @@ powershell -ExecutionPolicy Bypass -File arm\update-pi.ps1
 ```
 สคริปต์จะ build ส่ง kernel ใหม่ให้คำสั่ง `update` ของ MyOS (ตรวจ CRC32 และอ่านกลับตรวจทุก sector) แล้วสั่ง `reboot` ถ้าบูตไม่ขึ้น ให้ใช้ตัวอ่านการ์ดวาง `arm\build\myos8.img` ที่ใช้ได้กลับลงไป
 
-**ใช้งาน:** เสียบสาย USB เข้าช่อง **USB** ของ Pi (ช่องกลาง) MyOS จะขึ้นเป็นพอร์ต COM ใหม่ เปิดด้วย PuTTY (Serial) ไฟ LED สีเขียวกะพริบ "ติ๊ก-ติ๊ก… เว้น" = MyOS รันอยู่, กะพริบรัวเร็ว = พัง
+**ใช้งาน:** เสียบสาย USB เข้าช่อง **USB** ของ Pi (ช่องกลาง) MyOS จะขึ้นเป็นพอร์ต COM ใหม่ เปิดด้วย PuTTY (Serial) ไฟ LED สีเขียวกะพริบ "ติ๊ก-ติ๊ก… เว้น" = MyOS รันอยู่, กะพริบรัวเร็ว = พัง (กด `R` ในหน้าต่าง COM port เพื่อรีสตาร์ทได้เลย ไม่ต้องถอดสาย)
 
-คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cat`, `write`, `rm`, `format`, `pkg`, `net`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
+คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cat`, `write`, `rm`, `format`, `pkg`, `net`, `wifi`, `ping`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
 
 **เครือข่ายผ่านสาย USB:** นอกจากพอร์ต COM แล้ว Pi ยังขึ้นเป็นการ์ดเครือข่าย "MyOS Network" บน Windows (Windows 10 ขึ้นไปโหลด driver เอง) Pi คือ `192.168.7.1` (ชื่อ `myos.usb`) คอมจะได้ `192.168.7.2` อัตโนมัติ
 - `ping 192.168.7.1`
@@ -105,11 +105,11 @@ pkg upgrade             อัปเดตแอปที่มีเวอร�
 pkg list                แอปที่อยู่ในเครื่อง
 apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รับ -y, show, purge, full-upgrade)
 ```
-แอปที่มีตอนนี้ (38 ตัว):
+แอปที่มีตอนนี้ (39 ตัว):
 - **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps
 - **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf
 - **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz
-- **ระบบ:** htop (ดู CPU, อุณหภูมิ, หน่วยความจำ, โปรเซส; ลูกศรเลือก, `K` kill, `q` ออก)
+- **ระบบ:** htop (ดู CPU, อุณหภูมิ, หน่วยความจำ, โปรเซส; ลูกศรเลือก, `K` kill, `q` ออก), wifiman (จัดการ Wi-Fi)
 - **โปรแกรม C เดิม:** calc, cdemo, countdown, crashme, fortune, guess, python
 
 **ภาษาโปรแกรม** (`pkg search language`):
@@ -151,6 +151,32 @@ Ctrl+C                หยุดโปรแกรมที่อยู่ข�
 - โปรแกรมพิมพ์ออกเฉพาะ session ที่รันมัน, Ctrl+C หยุดเฉพาะโปรแกรมของ session นั้น, `fg` ดึงได้เฉพาะงานของ session ตัวเอง
 - `ps` เห็นทุกโปรแกรมของทุก session (คอลัมน์ TTY: serial / telnet / ssh1-3, `*` = session นี้)
 - ปิดหน้าต่าง SSH หรือ `exit` แล้ว shell และโปรแกรมทั้งหมดของ session นั้นถูกปิดตาม
+
+**Wi-Fi** (Pi Zero 2 W, ชิป CYW43436): ต้องมีไฟล์ firmware ใน MyFS ก่อน ดาวน์โหลดด้วย `tools\get-deps.ps1` (ไปอยู่ที่ `third_party\wifi-firmware\` ไม่เก็บใน git เพราะเป็นของ Broadcom/Cypress) แล้วส่งเข้า Pi:
+```
+python3 tools/pi.py push third_party/wifi-firmware/brcmfmac43436-sdio.bin third_party/wifi-firmware/brcmfmac43436-sdio.txt third_party/wifi-firmware/brcmfmac43436-sdio.clm_blob
+```
+(บน Windows ใช้ `arm\push-pi.ps1 ไฟล์...` ได้เหมือนกัน; บอร์ดบางตัวเป็นชิป rev 1 ต้องใช้ `brcmfmac43436s-sdio.bin` + `.txt` แทน `wifi -v on` จะบอกว่าขาดไฟล์ไหน)
+
+คำสั่งบน MyOS:
+```
+wifi                         สถานะ: ชิป, firmware, MAC, เครือข่าย, IP, เครือข่ายที่จำไว้
+wifi scan                    เครือข่ายรอบตัว (ชื่อ, ความแรงสัญญาณ, ช่อง, ระบบรักษาความปลอดภัย)
+wifi connect ชื่อ รหัสผ่าน    เข้าเครือข่าย (ชื่อมีเว้นวรรคใส่ "ชื่อ มี เว้นวรรค") ต่อได้แล้วจำไว้ให้
+wifi connect ชื่อ             เครือข่ายที่จำไว้แล้ว หรือเครือข่ายเปิด
+wifi disconnect              ออกจากเครือข่าย
+wifi forget ชื่อ              ลืมเครือข่ายที่จำไว้
+wifi log                     log ของ firmware ในชิป Wi-Fi (ไว้หาสาเหตุเวลามีปัญหา)
+wifi -v ...                  แสดงทุกขั้นตอน (-vv แสดงทุก frame)
+ping 192.168.1.1             ส่ง ping 4 ครั้ง (ใช้ได้ทั้งทาง Wi-Fi และสาย USB)
+wifiman                      แอปจัดการ Wi-Fi เต็มจอ (pkg install wifiman): ลูกศรเลือก, Enter เข้า, r สแกน, d ออก, f ลืม, q ปิด
+```
+- เครือข่ายที่จำไว้อยู่ในไฟล์ `wifi.cfg` บน MyFS (รหัสผ่านเก็บเป็นข้อความธรรมดา) เปิดเครื่องแล้ว MyOS จะต่อเครือข่ายที่จำไว้ซึ่งสัญญาณแรงที่สุดให้เองเบื้องหลัง
+- รองรับ: เครือข่ายเปิด, WPA2-PSK, WPA-PSK (firmware ในชิปทำ 4-way handshake เอง) ยังไม่รองรับ WEP, WPA3 อย่างเดียว, 5 GHz (ชิปมีแค่ 2.4 GHz)
+- ได้ IP จาก router ด้วย DHCP แล้ว Wi-Fi เป็นเส้นทางหลักออกเน็ต ส่วน 192.168.7.x ยังไปทางสาย USB เหมือนเดิม
+- SSH เข้าทาง Wi-Fi ได้ (`ssh myos@<IP ของ Pi>`) แต่ telnet (ไม่มีรหัสผ่าน) และ DHCP/DNS server ของ MyOS ทำงานเฉพาะทางสาย USB
+- แอป Python ใช้ `myos.wifi_status()`, `myos.wifi_scan()`, `myos.wifi_networks()`, `myos.wifi_connect(ชื่อ, รหัส)`, `myos.wifi_disconnect()`, `myos.wifi_forget(ชื่อ)`, `myos.wifi_saved()` ได้ (ต้องใช้ python 1.4 ขึ้นไป: `pkg upgrade`)
+- ใน QEMU ไม่มีชิป Wi-Fi คำสั่ง `wifi` จะบอกว่า "No Wi-Fi chip found"
 
 **ส่งไฟล์เข้า Pi ผ่าน USB** (แพ็กเกจ, ไฟล์ `.py` ฯลฯ):
 ```powershell
