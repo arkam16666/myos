@@ -141,38 +141,187 @@ static void print_prompt(void) {
     console_puts("> ");
 }
 
+// ---------------------------------------------------------------
+//  the line editor: arrow keys, Home/End, Delete, and a history of
+//  commands per terminal (up/down). Terminals send the special keys as
+//  "escape sequences": ESC [ A = up, ESC [ B = down, ESC [ C = right,
+//  ESC [ D = left, ESC [ H / ESC [ 1 ~ = Home, ESC [ F / ESC [ 4 ~ = End,
+//  ESC [ 3 ~ = Delete (some send ESC O A ... instead).
+// ---------------------------------------------------------------
+#define HISTORY   32
+#define LINE_MAX  250
+static char history[NTTY][HISTORY][LINE_MAX];
+static int history_count[NTTY];             // lines ever saved (the newest is count-1)
+
+enum { KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END, KEY_DEL };
+
+typedef struct {
+    char *buf;
+    int size, len, pos;                     // pos = where the cursor is in buf
+} line_t;
+
+// show buf[pos..len), blank 'erase' old characters after it, put the cursor back at pos
+static void redraw_tail(line_t *l, int erase) {
+    for (int i = l->pos; i < l->len; i++) console_putc(l->buf[i]);
+    for (int i = 0; i < erase; i++) console_putc(' ');
+    for (int i = l->len + erase; i > l->pos; i--) console_putc('\b');
+}
+
+static void cursor_home(line_t *l) {
+    while (l->pos > 0) {
+        console_putc('\b');
+        l->pos--;
+    }
+}
+
+static void cursor_end(line_t *l) {
+    while (l->pos < l->len) console_putc(l->buf[l->pos++]);
+}
+
+// put text in the line instead of what is there (history, Ctrl+U)
+static void replace_line(line_t *l, const char *text) {
+    cursor_home(l);
+    int old = l->len, n = (int)strlen(text);
+    if (n > l->size - 1) n = l->size - 1;
+    memcpy(l->buf, text, (size_t)n);
+    l->len = n;
+    l->pos = 0;
+    redraw_tail(l, old > n ? old - n : 0);
+    cursor_end(l);
+}
+
+static void remember(int t, const char *line) {
+    if (!line[0]) return;
+    int n = history_count[t];
+    if (n && strcmp(history[t][(n - 1) % HISTORY], line) == 0) return;   // same as the last one
+    size_t len = strlen(line);
+    if (len > LINE_MAX - 1) len = LINE_MAX - 1;
+    memcpy(history[t][n % HISTORY], line, len);
+    history[t][n % HISTORY][len] = 0;
+    history_count[t] = n + 1;
+}
+
 static void read_line(char *buf, int size) {
-    int len = 0;
+    line_t l = { buf, size, 0, 0 };
+    int t = console_tty();
+    int oldest = history_count[t] > HISTORY ? history_count[t] - HISTORY : 0;
+    int browse = history_count[t];          // == history_count: the new line being typed
+    char typed[LINE_MAX];                   // that new line, while looking at old ones
+    typed[0] = 0;
+    int esc = 0, esc_num = 0;               // 1 = after ESC, 2 = inside ESC [ / ESC O
     for (;;) {
         int c = console_getc_nowait();
 #ifndef NO_USB
-        if (console_tty() == 0 && usb_take_connect_event()) {   // a terminal opened the COM port
+        if (t == 0 && usb_take_connect_event()) {   // a terminal opened the COM port
             console_puts("\n");
             console_puts(banner);
             print_prompt();
-            buf[len] = 0;
-            console_puts(buf);
+            int pos = l.pos;
+            l.pos = 0;
+            redraw_tail(&l, 0);
+            while (l.pos < pos) console_putc(l.buf[l.pos++]);
+            console_puts("");
         }
 #endif
         if (c < 0) continue;
-        if (c == '\r' || c == '\n') {
+
+        int key = KEY_NONE;
+        if (esc == 1) {
+            esc = (c == '[' || c == 'O') ? 2 : 0;
+            esc_num = 0;
+            continue;
+        }
+        if (esc == 2) {
+            if (c >= '0' && c <= '9') {
+                esc_num = esc_num * 10 + (c - '0');
+                continue;
+            }
+            esc = 0;
+            if (c == 'A') key = KEY_UP;
+            else if (c == 'B') key = KEY_DOWN;
+            else if (c == 'C') key = KEY_RIGHT;
+            else if (c == 'D') key = KEY_LEFT;
+            else if (c == 'H') key = KEY_HOME;
+            else if (c == 'F') key = KEY_END;
+            else if (c == '~' && (esc_num == 1 || esc_num == 7)) key = KEY_HOME;
+            else if (c == '~' && (esc_num == 4 || esc_num == 8)) key = KEY_END;
+            else if (c == '~' && esc_num == 3) key = KEY_DEL;
+            else continue;                  // a key we don't use (F1 ...)
+        } else if (c == 0x1b) {
+            esc = 1;
+            continue;
+        }
+
+        if (key == KEY_NONE && (c == '\r' || c == '\n')) {
+            buf[l.len] = 0;
             console_putc('\n');
-            buf[len] = 0;
+            remember(t, buf);
             return;
         }
-        if (c == 3) {                               // Ctrl+C: forget this line
+        if (key == KEY_NONE && c == 3) {    // Ctrl+C: forget this line
             console_puts("^C\n");
             buf[0] = 0;
             return;
         }
-        if ((c == 8 || c == 127) && len > 0) {      // backspace
-            len--;
-            console_puts("\b \b");
-        } else if (c >= ' ' && c <= '~' && len < size - 1) {
-            buf[len++] = (char)c;
-            console_putc((char)c);
-            console_puts("");                       // send it now
+        if (key == KEY_NONE) {              // control keys like in bash
+            if (c == 1) key = KEY_HOME;     // Ctrl+A
+            else if (c == 5) key = KEY_END; // Ctrl+E
+            else if (c == 2) key = KEY_LEFT;    // Ctrl+B
+            else if (c == 6) key = KEY_RIGHT;   // Ctrl+F
+            else if (c == 16) key = KEY_UP;     // Ctrl+P
+            else if (c == 14) key = KEY_DOWN;   // Ctrl+N
         }
+
+        if (key == KEY_UP) {
+            if (browse > oldest) {
+                if (browse == history_count[t]) {   // keep what was being typed
+                    memcpy(typed, buf, (size_t)l.len);
+                    typed[l.len] = 0;
+                }
+                browse--;
+                replace_line(&l, history[t][browse % HISTORY]);
+            }
+        } else if (key == KEY_DOWN) {
+            if (browse < history_count[t]) {
+                browse++;
+                replace_line(&l, browse == history_count[t] ? typed : history[t][browse % HISTORY]);
+            }
+        } else if (key == KEY_LEFT) {
+            if (l.pos > 0) {
+                l.pos--;
+                console_putc('\b');
+            }
+        } else if (key == KEY_RIGHT) {
+            if (l.pos < l.len) console_putc(buf[l.pos++]);
+        } else if (key == KEY_HOME) {
+            cursor_home(&l);
+        } else if (key == KEY_END) {
+            cursor_end(&l);
+        } else if (key == KEY_DEL) {
+            if (l.pos < l.len) {
+                memmove(buf + l.pos, buf + l.pos + 1, (size_t)(l.len - l.pos - 1));
+                l.len--;
+                redraw_tail(&l, 1);
+            }
+        } else if (c == 8 || c == 127) {    // Backspace
+            if (l.pos > 0) {
+                memmove(buf + l.pos - 1, buf + l.pos, (size_t)(l.len - l.pos));
+                l.len--;
+                l.pos--;
+                console_putc('\b');
+                redraw_tail(&l, 1);
+            }
+        } else if (c == 21) {               // Ctrl+U: clear the line
+            replace_line(&l, "");
+        } else if (c >= ' ' && c <= '~' && l.len < size - 1) {     // type a character
+            memmove(buf + l.pos + 1, buf + l.pos, (size_t)(l.len - l.pos));
+            buf[l.pos] = (char)c;
+            l.len++;
+            console_putc((char)c);
+            l.pos++;
+            if (l.pos < l.len) redraw_tail(&l, 0);
+        }
+        console_puts("");                   // send it now
     }
 }
 

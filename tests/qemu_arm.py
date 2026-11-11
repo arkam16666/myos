@@ -38,6 +38,10 @@ BASIC = [
     ("echo",        "echo hello pi",      ["hello pi"]),
     ("uptime",      "uptime",             ["Uptime:"]),
     ("unknown",     "nope",               ["Unknown command"]),
+    # up arrow x3 = "echo hello pi" again (after uptime and nope)
+    ("history",     "\x1b[A\x1b[A\x1b[A", ["pi\r\nhello pi\r\n"]),
+    # left arrow x3 then 'o': "echo wrld" -> "echo world"
+    ("line edit",   "echo wrld\x1b[D\x1b[D\x1b[Do", ["\r\nworld\r\n"]),
 ]
 
 SD = [
