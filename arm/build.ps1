@@ -10,9 +10,14 @@ param([switch]$NoRun, [switch]$Pi4)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-$clang = Get-Command clang -ErrorAction SilentlyContinue
-$clang = if ($clang) { $clang.Source } else { "$env:ProgramFiles\LLVM\bin\clang.exe" }
-if (-not (Test-Path $clang)) { throw "clang not found (winget install LLVM.LLVM)" }
+# macOS: Apple's /usr/bin/clang can't link bare-metal ARM, so prefer Homebrew's LLVM (brew install llvm lld)
+$clang = @('/opt/homebrew/opt/llvm/bin/clang', '/usr/local/opt/llvm/bin/clang') |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $clang) {
+    $clang = Get-Command clang -ErrorAction SilentlyContinue
+    $clang = if ($clang) { $clang.Source } else { "$env:ProgramFiles\LLVM\bin\clang.exe" }
+}
+if (-not (Test-Path $clang)) { throw "clang not found (winget install LLVM.LLVM / brew install llvm lld)" }
 
 $tusb = '../third_party/tinyusb'
 $bcm  = "$tusb/hw/mcu/broadcom"
@@ -29,7 +34,7 @@ if ($Pi4) { $flags += '-DPI4' }
 
 $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadcom/gen/interrupt_handlers.c",
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
-            'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'fat.c', 'myfs.c',
+            'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'sdhost.c', 'fat.c', 'myfs.c',
             'user.c', 'proc.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c')
 $usb    = @('usb.c', 'net.c', 'remote.c', 'ssh.c', 'rng.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
@@ -63,11 +68,11 @@ if ($failed) { throw "build failed" }
 
 # myos8.img for the SD card: the kernel padded with zeros to a fixed 1 MB,
 # so 'update' can always rewrite it in place (MyOS can't grow FAT files)
-$kernel = [IO.File]::ReadAllBytes("$PSScriptRoot\build\kernel8.img")
+$kernel = [IO.File]::ReadAllBytes("$PSScriptRoot/build/kernel8.img")
 if ($kernel.Length -gt 1MB) { throw "kernel8.img is bigger than 1 MB" }
 $padded = New-Object byte[] 1MB
 [Array]::Copy($kernel, $padded, $kernel.Length)
-[IO.File]::WriteAllBytes("$PSScriptRoot\build\myos8.img", $padded)
+[IO.File]::WriteAllBytes("$PSScriptRoot/build/myos8.img", $padded)
 
 # packages for the Pi: the same packages\*.c as MyOS PC, built for ARM64
 # -> build\packages\NAME.pkg (send them to the Pi with push-pi.ps1)
@@ -119,12 +124,22 @@ $make = if ($make) { $make.Source } else {
     Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter make.exe -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName }
 if ((Test-Path ../third_party/micropython/py) -and $make) {
-    # make can't handle the non-ASCII folder name, so build through an ASCII junction
-    $junction = "$env:TEMP\myos-src"
-    if (-not (Test-Path $junction)) { New-Item -ItemType Junction -Path $junction -Target (Resolve-Path ..).Path | Out-Null }
+    $root = (Resolve-Path ..).Path
     $savedPath = $env:PATH
-    $env:PATH = "$(Split-Path $clang);$env:ProgramFiles\Git\usr\bin;$env:PATH"
-    Push-Location "$junction\python"
+    if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+        # make can't handle the non-ASCII folder name, so build through an ASCII junction
+        $src = "$env:TEMP\myos-src"
+        if (-not (Test-Path $src)) { New-Item -ItemType Junction -Path $src -Target $root | Out-Null }
+        $env:PATH = "$(Split-Path $clang);$env:ProgramFiles\Git\usr\bin;$env:PATH"
+    } else {
+        $src = $root
+        if ($root -match '[^\x00-\x7F]') {      # same problem, solved with a symlink
+            $src = Join-Path ([IO.Path]::GetTempPath()) 'myos-src'
+            if (-not (Test-Path $src)) { New-Item -ItemType SymbolicLink -Path $src -Target $root | Out-Null }
+        }
+        $env:PATH = "$(Split-Path $clang):$env:PATH"
+    }
+    Push-Location (Join-Path $src 'python')
     $ErrorActionPreference = 'Continue'
     try { & $make ARCH=arm64 -j8 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '\berror\b' } | ForEach-Object { Write-Host "  $_" } }
     finally { Pop-Location; $env:PATH = $savedPath; $ErrorActionPreference = 'Stop' }
@@ -141,6 +156,9 @@ Write-Host "Built arm\build\kernel8.img ($((Get-Item build/kernel8.img).Length) 
 if (-not $NoRun) {
     $machine = if ($Pi4) { 'raspi4b' } else { 'raspi3b' }
     # -nographic: the Pi's serial port becomes this console. Quit with Ctrl+A then X.
-    Start-Process "$env:ProgramFiles\qemu\qemu-system-aarch64.exe" -ArgumentList `
-        '-M', $machine, '-kernel', 'build/kernel8-qemu.img', '-nographic'
+    $qemu = Get-Command qemu-system-aarch64 -ErrorAction SilentlyContinue
+    $qemu = if ($qemu) { $qemu.Source } else { "$env:ProgramFiles\qemu\qemu-system-aarch64.exe" }
+    $qargs = @('-M', $machine, '-kernel', 'build/kernel8-qemu.img', '-nographic')
+    if ($IsWindows -or $env:OS -eq 'Windows_NT') { Start-Process $qemu -ArgumentList $qargs }
+    else { & $qemu @qargs }     # no separate console window on macOS/Linux: run in this terminal
 }

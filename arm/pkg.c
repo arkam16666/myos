@@ -592,3 +592,37 @@ void pkg_command(const char *args) {
     else if (strcmp(cmd, "upgrade") == 0) pkg_upgrade();
     else console_puts(usage);
 }
+
+// "apt" / "apt-get": the same as pkg, for fingers used to Debian / Raspberry Pi OS.
+// Options like -y are dropped (pkg never asks), and apt's other names are understood.
+void apt_command(const char *args) {
+    static const char *const alias[][2] = {
+        { "show", "info" }, { "purge", "remove" }, { "full-upgrade", "upgrade" },
+        { "dist-upgrade", "upgrade" },
+    };
+    char line[128], w[48];
+    size_t n = 0;
+    int first = 1;
+    for (;;) {
+        args = word(args, w, sizeof w);
+        if (!w[0]) break;
+        if (w[0] == '-') continue;              // -y, --yes, --installed ...
+        const char *out = w;
+        if (first)
+            for (size_t i = 0; i < sizeof alias / sizeof alias[0]; i++)
+                if (strcmp(w, alias[i][0]) == 0) out = alias[i][1];
+        first = 0;
+        size_t len = strlen(out);
+        if (n + len + 2 > sizeof line) break;
+        if (n) line[n++] = ' ';
+        memcpy(line + n, out, len);
+        n += len;
+    }
+    line[n] = 0;
+    if (n == 0) {
+        console_puts("Usage: apt update | upgrade | install NAME... | remove NAME | search [WORD]\n"
+                     "       apt show NAME | list      (the same as 'pkg')\n");
+        return;
+    }
+    pkg_command(line);
+}

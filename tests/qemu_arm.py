@@ -8,6 +8,7 @@ wrote are read back with tools/myfs.py.
 usage: python tests/qemu_arm.py
 """
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -19,8 +20,15 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import mksdimg  # noqa: E402
 import myfs  # noqa: E402
 
-QEMU = r"C:\Program Files\qemu\qemu-system-aarch64.exe"
-PORT = 45481
+QEMU = (shutil.which("qemu-system-aarch64")
+        or r"C:\Program Files\qemu\qemu-system-aarch64.exe")
+def _free_port():           # a port nobody uses, so several test runs can go at once
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+PORT = int(os.environ.get("MYOS_TEST_PORT", 0)) or _free_port()
 
 # (name, command, text that must appear in the answer)
 BASIC = [
@@ -35,9 +43,10 @@ BASIC = [
 SD = [
     # QEMU makes a 64 MB card an old-style SDSC card (byte addresses);
     # real cards today are SDHC (sector addresses): both paths are covered
-    ("sd info",         "sd",                     ["SD card:", "64 MB", "myfs.img: sectors 4099-20482"]),
+    ("sd info",         "sd",                     ["SD card:", "64 MB", "on SDHOST", "myfs.img: sectors 4099-20482"]),
     ("raw sector",      "hexdump 2048",           ["Sector 2048", "MYOS"]),
     ("ls",              "ls",                     ["readme.txt", "hello.py", "2 file(s)"]),
+    ("df",              "df -h",                  ["Size   Used  Avail  Use%  Files", "myfs.img", "/64  /"]),
     ("cat (from PC)",   "cat readme.txt",         ["Welcome to MyOS!"]),
     ("write",           "write pi.txt made on a pi", ["Wrote 13 bytes to pi.txt"]),
     ("cat (own file)",  "cat pi.txt",             ["made on a pi"]),
@@ -66,6 +75,10 @@ PROGRAMS += [
     ("pkg info",          "pkg info guess",       ["Installed:   no", "Guess the number"]),
     ("pkg remove",        "pkg remove calc",      ["Removed calc"]),
     ("removed",           "calc",                 ["Unknown command"]),
+    ("apt show",          "apt show guess",       ["Installed:   no", "Guess the number"]),
+    ("apt install -y",    "apt install -y calc",  ["Installing calc 1.1", "Done."]),
+    ("apt purge",         "apt-get purge calc",   ["Removed calc"]),
+    ("apt usage",         "apt",                  ["Usage: apt"]),
     ("install python",    "pkg install python",   ["Done."], 3),
     ("write a script",    "write t.py print(6 * 7, 7 / 2)", ["Wrote"]),
     ("python file",       "python t.py",          ["42 3.5"], 4),

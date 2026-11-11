@@ -213,7 +213,9 @@ static void cmd_help(void) {
                  "  write F X write text X into file F\n"
                  "  rm F      delete file F\n"
                  "  format    erase myfs.img, create an empty file system\n"
+                 "  df        how full the disk (MyFS) is\n"
                  "  pkg       apps: pkg update | search | install N | remove N | list\n"
+                 "  apt       the same as pkg (apt install -y N, apt show N ...)\n"
                  "  net       USB network status (the Pi is 192.168.7.1)\n"
                  "  passwd    set the SSH password\n"
                  "  NAME &    run a program in the background\n"
@@ -273,7 +275,9 @@ static void cmd_sd(void) {
     print_dec(sd_sectors() / 2048);
     console_puts(" MB, controller clock ");
     print_dec(sd_base_clock() / 1000000);
-    console_puts(" MHz\nmyfs.img: ");
+    console_puts(" MHz, on ");
+    console_puts(sd_controller());
+    console_puts("\nmyfs.img: ");
     if (fat_status) {
         console_puts("not usable (");
         print_signed(fat_status);
@@ -343,6 +347,57 @@ static void cmd_ls(void) {
     console_puts(" file(s), ");
     print_dec(myfs_free_kb());
     console_puts(" KB free\n");
+}
+
+static void print_size_kb(uint32_t kb) {       // 512K, 14.8M (like df -h)
+    if (kb < 1024) {
+        print_dec(kb);
+        console_putc('K');
+        return;
+    }
+    uint32_t tenths = (kb * 10 + 512) / 1024;
+    print_dec(tenths / 10);
+    console_putc('.');
+    print_dec(tenths % 10);
+    console_putc('M');
+}
+
+static void pad_to(int written, int width) {
+    while (written++ < width) console_putc(' ');
+}
+
+static int size_width(uint32_t kb) {            // characters print_size_kb will use
+    int digits = 1;
+    uint32_t v = kb < 1024 ? kb : (kb * 10 + 512) / 1024 / 10;
+    while (v >= 10) { v /= 10; digits++; }
+    return kb < 1024 ? digits + 1 : digits + 3;
+}
+
+static void df_column(uint32_t kb) {
+    pad_to(size_width(kb), 7);
+    print_size_kb(kb);
+}
+
+// df [-h]: how full MyFS is (sizes are always "human readable")
+static void cmd_df(void) {
+    if (!need_fs()) return;
+    uint32_t size = myfs_dev.sectors / 2, avail = myfs_free_kb();
+    uint32_t used = size > avail ? size - avail : 0;
+    console_puts("Filesystem   Size   Used  Avail  Use%  Files  Mounted on\n");
+    console_puts("myfs.img  ");
+    df_column(size);
+    df_column(used);
+    df_column(avail);
+    uint32_t pct = size ? (used * 100 + size - 1) / size : 0;
+    pad_to(pct >= 100 ? 3 : pct >= 10 ? 2 : 1, 5);
+    print_dec(pct);
+    console_putc('%');
+    int files = myfs_count();
+    pad_to((files >= 10 ? 2 : 1) + 3, 7);
+    print_dec((uint64_t)files);
+    console_puts("/");
+    print_dec(MYFS_MAX_FILES);
+    console_puts("  /\n");
 }
 
 static void cmd_cat(const char *arg) {
@@ -848,6 +903,8 @@ static void shell_loop(void) {
             cmd_hexdump(arg);
         } else if (command(line, "ls")) {
             cmd_ls();
+        } else if (command(line, "df") || command(line, "df -h")) {
+            cmd_df();
         } else if ((arg = command(line, "cat"))) {
             cmd_cat(arg);
         } else if ((arg = command(line, "write"))) {
@@ -858,6 +915,8 @@ static void shell_loop(void) {
             cmd_format(arg);
         } else if ((arg = command(line, "pkg"))) {
             pkg_command(arg);
+        } else if ((arg = command(line, "apt")) || (arg = command(line, "apt-get"))) {
+            apt_command(arg);
         } else if (command(line, "net")) {
             cmd_net();
         } else if (command(line, "passwd")) {

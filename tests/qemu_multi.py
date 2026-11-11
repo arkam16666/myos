@@ -4,6 +4,7 @@ usage: python tests/qemu_multi.py
 """
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -14,8 +15,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import mksdimg  # noqa: E402
 
-QEMU = r"C:\Program Files\qemu\qemu-system-aarch64.exe"
-PORT = 45485
+QEMU = (shutil.which("qemu-system-aarch64")
+        or r"C:\Program Files\qemu\qemu-system-aarch64.exe")
+def _free_port():           # a port nobody uses, so several test runs can go at once
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+PORT = int(os.environ.get("MYOS_TEST_PORT", 0)) or _free_port()
 SPIN = "local t=os.clock() while os.clock()-t < %d do end print('%s')"
 
 
@@ -175,8 +183,9 @@ def main():
         out = read(2, "myos> ")
         send("ps")
         out += read(3, "Free memory")
+        # QEMU's raspi3b: 1 GB, the firmware keeps 64 MB for the GPU, the kernel the first 64 MB
         check("Ctrl+C at prompt, memory all free", "^C" in out and "Unknown command" not in out
-              and "Free memory for programs: 256 MB" in out, out)
+              and "Free memory for programs: 896 MB" in out, out)
     finally:
         s.close()
         qemu.kill()
