@@ -143,6 +143,7 @@ JAVA_TESTS = [
      ["Hello Arka Mai, 3 + 4 = 7, half of 2.5 is 1.25", "1: the", "4: fox", "bye"]),
     ("java Classic", True, [], None),
     ("java Modern", False, [], None),
+    ("java FileIO", False, [], None),
     ("java -jar app.jar MyOS", True, [], ["Hello MyOS from a jar!", "main class app.Main in package app"]),
     ("java Unsupported", True, [], ["before", "java.lang.NoClassDefFoundError: java.awt.Point",
                                     "at Unsupported.main(Unsupported.java:5)", "Program exited with code 1"]),
@@ -183,7 +184,8 @@ def prepare_java(tmp):
         d = out[r8]
         if expect is None:              # what the real JVM prints
             r = subprocess.run([java, "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", d] + words,
-                               capture_output=True, text=True, encoding="utf-8", input="\n".join(typed) + "\n")
+                               capture_output=True, text=True, encoding="utf-8", input="\n".join(typed) + "\n",
+                               cwd=tmp)
             expect = [line.rstrip().replace("java.base/", "") for line in (r.stdout + r.stderr).splitlines()
                       if line.strip()]
         TESTS["java"].append((cmd, typed, expect, b"?"))
