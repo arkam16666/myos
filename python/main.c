@@ -86,6 +86,8 @@ int main(const char *args) {
     mp_stack_set_limit(256 * 1024);
     gc_init(heap, heap + sizeof(heap));
     mp_init();
+    // import also looks in /lib, where 'pip install' puts libraries
+    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
     run_startup_code();
 
     int status = 0;

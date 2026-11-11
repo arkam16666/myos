@@ -10,13 +10,18 @@
 uint32_t myos_random_seed(void);                // hal.c
 #define MICROPY_PY_JSON                   (1)
 #define MICROPY_PY_TIME                   (1)
-#define MICROPY_PY_TIME_GMTIME_LOCALTIME_MKTIME (0)
+#define MICROPY_PY_TIME_GMTIME_LOCALTIME_MKTIME (1)   // gmtime/localtime/mktime (datetime needs them)
+#define MICROPY_EPOCH_IS_1970             (1)   // like CPython: gmtime(0) is 1 Jan 1970
 #define MICROPY_PY_TIME_TIME_TIME_NS      (1)
 #define MICROPY_PY_TIME_INCLUDEFILE       "modtime_port.c"
-#define MICROPY_PY_SYS_STDFILES           (0)   // no sys.stdin/stdout streams yet
+#define MICROPY_PY_SYS_STDFILES           (1)   // sys.stdin/stdout/stderr (logging needs them)
 #define MICROPY_PY_UCTYPES                (0)   // raw memory access: not for ring 3
 #define MICROPY_PY_OS                     (0)   // MyOS has its own small os module (file.c)
 #define MICROPY_PY_SYS_ARGV               (1)   // python game.py a b -> sys.argv
+#define MICROPY_PY_HASHLIB                (1)   // hashlib.sha256 (pip checks downloads)
+#define MICROPY_PY_BINASCII               (1)   // hexlify, base64
+#define MICROPY_PY_BINASCII_CRC32         (0)   // (would need uzlib)
+#define MICROPY_PY_RE                     (1)   // import re
 
 #define MICROPY_ENABLE_COMPILER           (1)
 #define MICROPY_ENABLE_GC                 (1)

@@ -176,6 +176,8 @@
 - [ ] **4.6.8** วันที่จริง: เอาเวลาจากคอมผ่าน USB network (HTTP `Date` / NTP) ให้ `cal`, `date`, `Date()` ถูก
 - [x] **4.6.9** pkg จากอินเทอร์เน็ต: DNS (lwIP), HTTPS (TLS 1.3 เขียนเอง: X25519 + ChaCha20-Poly1305), คลังแอปบน GitHub (branch packages) เซ็นด้วย Ed25519
   - เสร็จเมื่อ: Pi ต่อ Wi-Fi แล้ว pkg update / pkg install ดึงจาก GitHub ได้โดยไม่ต้องเปิดคอม ✅ (ลายเซ็นผ่าน, node 728 KB)
+- [x] **4.6.10** `pip` (และ `mip`): ไลบรารี Python จาก micropython-lib ลง `/lib` (ตาม dependency, ตรวจ SHA-256 ทุกไฟล์), `list`/`show`/`uninstall`/`search`, python 1.7 มี `hashlib`/`binascii`/`re`/`time.localtime` และค้น `/lib`
+  - เสร็จเมื่อ: `pip install datetime` บน Pi จริงแล้ว `import datetime` ได้ (QEMU ✅ ด้วยเว็บจำลอง, `tests/host/pip_host.py` กับ micropython.org จริง ✅, Pi จริง: รอทดสอบ)
 
 ### 4.8 โปรแกรม Linux บน Pi (เป้าหมาย: แอปจาก apt)
 แอปใน `.deb` คือโปรแกรม Linux จึงให้ MyOS รันไฟล์ ELF ของ Linux ได้โดยจำลอง system call ของ Linux (`arm\linux.c`)

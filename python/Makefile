@@ -48,11 +48,14 @@ SRC_C = \
 	shared/runtime/gchelper_generic.c \
 	shared/runtime/pyexec.c \
 	shared/runtime/stdout_helpers.c \
+	shared/timeutils/timeutils.c \
+	shared/runtime/sys_stdio_mphal.c \
 	$(LIBM_C) \
 	$(EXTMOD_C) \
 
-# extra Python modules: random, json, time
-EXTMOD_C = extmod/modrandom.c extmod/modjson.c extmod/modtime.c
+# extra Python modules: random, json, time, hashlib (sha256, for pip), binascii, re
+EXTMOD_C = extmod/modrandom.c extmod/modjson.c extmod/modtime.c \
+	extmod/modhashlib.c extmod/modbinascii.c extmod/modre.c
 
 # double-precision math library that ships with MicroPython
 LIBM_C = $(addprefix lib/libm_dbl/, \
@@ -64,7 +67,8 @@ LIBM_C = $(addprefix lib/libm_dbl/, \
 	tanh.c tgamma.c trunc.c)
 $(BUILD)/lib/libm_dbl/%.o: CFLAGS += -w
 
-SRC_QSTR += file.c modmyos.c shared/readline/readline.c shared/runtime/pyexec.c $(EXTMOD_C)
+SRC_QSTR += file.c modmyos.c shared/readline/readline.c shared/runtime/pyexec.c $(EXTMOD_C) \
+	shared/runtime/sys_stdio_mphal.c
 
 OBJ += $(PY_CORE_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))

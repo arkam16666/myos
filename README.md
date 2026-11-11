@@ -236,6 +236,24 @@ wifiman                      แอปจัดการ Wi-Fi เต็มจ�
 - แอป Python ใช้ `myos.wifi_status()`, `myos.wifi_scan()`, `myos.wifi_networks()`, `myos.wifi_connect(ชื่อ, รหัส)`, `myos.wifi_disconnect()`, `myos.wifi_forget(ชื่อ)`, `myos.wifi_saved()` ได้ (ต้องใช้ python 1.4 ขึ้นไป: `pkg upgrade`)
 - ใน QEMU ไม่มีชิป Wi-Fi คำสั่ง `wifi` จะบอกว่า "No Wi-Fi chip found"
 
+**pip: ไลบรารี Python จากอินเทอร์เน็ต** (`pkg install pip`, ต่อ Wi-Fi ก่อน): ดึงไลบรารีจาก **micropython-lib** (คลังเดียวกับที่คำสั่ง `mip` ของ MicroPython ใช้ ที่ micropython.org) มาไว้ในโฟลเดอร์ `/lib` แล้ว `import` ได้เลย
+```
+pip install datetime          ติดตั้ง (พร้อมตัวที่มันต้องใช้) ลงใน /lib
+pip install datetime==4.0.0   เลือกรุ่น
+pip list                      ที่ติดตั้งไว้
+pip show datetime             รุ่น และไฟล์ที่ลงไว้
+pip uninstall datetime        ลบ (ไฟล์ที่แพ็กเกจอื่นใช้ร่วมอยู่จะไม่ถูกลบ)
+pip search date               ค้นในคลัง (pip search เฉยๆ = ทั้งหมด)
+python                        แล้ว >>> import datetime
+```
+- `mip` (`pkg install mip`) คือชื่อเดียวกันแบบ MicroPython: `mip install logging` = `pip install logging`
+- ใช้ได้: ไลบรารี Python ล้วนของ micropython-lib เช่น `datetime`, `logging`, `base64`, `fnmatch`, `functools`, `itertools`, `collections-defaultdict`, `unittest`, `copy`, `bisect`, `string` (ทดสอบใน QEMU แล้ว) ติดตั้งแบบซอร์ส `.py` (ไม่ใช่ `.mpy`)
+- ใช้ไม่ได้: แพ็กเกจจาก PyPI ที่ทำมาสำหรับ CPython เช่น `numpy`, `pandas`, `flask` (หลายตัวมีส่วนที่เขียนด้วย C) เพราะ MyOS รัน **MicroPython** ไม่ใช่ CPython, pip จะบอกให้ ไลบรารีที่ต้องใช้ `socket` (เช่น `requests`, `umqtt.simple`) หรือฮาร์ดแวร์ของบอร์ดไมโครคอนโทรลเลอร์ (`machine`, `bluetooth`) ติดตั้งได้แต่ยังใช้ไม่ได้ (pip ขึ้น Note บอก) ส่วน `textwrap` ติด regex ที่ซับซ้อนเกินสำหรับ `re` ของ MicroPython
+- ต้องใช้ python 1.7 ขึ้นไป (`pkg upgrade`): เพิ่ม `hashlib` (SHA-256), `binascii`, `re`, `time.gmtime/localtime/mktime`, `sys.stdout/stderr` และค้น `import` ใน `/lib` ด้วย ดิสก์ต้องเป็น MyFS v2 (มีโฟลเดอร์) ถ้ายังเป็น v1 pip จะบอกให้พิมพ์ `fsupgrade`
+- MyOS ยังไม่มีนาฬิกาจริง: `time.localtime()` / `datetime.now()` นับจาก 1 ม.ค. 1970 ตอนเปิดเครื่อง (ดู 4.6.8 ใน PLAN)
+- ความปลอดภัย: HTTPS ของ MyOS **ไม่ตรวจใบรับรอง** ของเซิร์ฟเวอร์ pip ตรวจ SHA-256 ของทุกไฟล์กับค่าในรายการของแพ็กเกจ (ไฟล์เสียหรือถูกแก้ระหว่างทางจะถูกปฏิเสธ) แต่ตัวรายการเองก็มาทาง HTTPS ที่ไม่ตรวจใบรับรองเหมือนกัน คนที่ดักกลางทางได้ (เช่น Wi-Fi สาธารณะ) จึงยังปลอมทั้งรายการและไฟล์ได้ ใช้บนเครือข่ายที่ไว้ใจ
+- รายชื่อที่ติดตั้งเก็บใน `/lib/.pip.json`, ในโปรแกรมดาวน์โหลดเองได้ด้วย `myos.fetch(url)` → `(status, bytes)` และ `myos.download(url, path)`
+
 **รันโปรแกรม Linux (BusyBox):** MyOS Pi รันโปรแกรม Linux ที่เป็นไฟล์ ELF แบบ static สำหรับ ARM64 (AArch64) ได้ โดยจำลอง system call ของ Linux (`arm\linux.c`) ตัวแรกที่ใช้ได้คือ BusyBox ซึ่งรวมคำสั่งแบบ Ubuntu กว่า 300 คำสั่งไว้ในไฟล์เดียว
 ```
 pkg install busybox          ติดตั้ง (หรือ push-pi.ps1 -Packages แล้ว pkg install busybox)

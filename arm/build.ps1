@@ -158,8 +158,12 @@ if ((Test-Path ../third_party/micropython/py) -and $make) {
     $savedPath = $env:PATH
     if ($IsWindows -or $env:OS -eq 'Windows_NT') {
         # make can't handle the non-ASCII folder name, so build through an ASCII junction
-        $src = "$env:TEMP\myos-src"
-        if (-not (Test-Path $src)) { New-Item -ItemType Junction -Path $src -Target $root | Out-Null }
+        # (only then: the junction points at one checkout, so an ASCII worktree builds in place)
+        $src = $root
+        if ($root -match '[^\x00-\x7F]') {
+            $src = "$env:TEMP\myos-src"
+            if (-not (Test-Path $src)) { New-Item -ItemType Junction -Path $src -Target $root | Out-Null }
+        }
         $env:PATH = "$(Split-Path $clang);$env:ProgramFiles\Git\usr\bin;$env:PATH"
     } else {
         $src = $root

@@ -1,6 +1,7 @@
 // Keyboard in / screen out for MicroPython, using MyOS syscalls
 #include "py/mpconfig.h"
 #include "py/mphal.h"
+#include "py/stream.h"
 #include "myos.h"
 
 // time: the MyOS timer ticks 100 times a second
@@ -34,6 +35,11 @@ uint32_t myos_random_seed(void) {
 
 uint64_t mp_hal_time_ns(void) {
     return (uint64_t)sys_ticks() * 10000000ULL;   // since boot (no calendar yet)
+}
+
+// sys.stdout can always be written; whether a key is waiting isn't known without reading it
+uintptr_t mp_hal_stdio_poll(uintptr_t poll_flags) {
+    return poll_flags & MP_STREAM_POLL_WR;
 }
 
 int mp_hal_stdin_rx_chr(void) {
