@@ -8,18 +8,19 @@
 #define MEM_SIZE                    (64 * 1024)
 #define MEMP_NUM_TCP_PCB            8
 #define MEMP_NUM_TCP_SEG            32
-#define PBUF_POOL_SIZE              16
+#define PBUF_POOL_SIZE              24
 
-#define LWIP_RAW                    0
+#define LWIP_RAW                    1       // ping
 #define LWIP_NETCONN                0
 #define LWIP_SOCKET                 0
-#define LWIP_DHCP                   0
+#define LWIP_DHCP                   1       // Wi-Fi asks the router for an address
+#define LWIP_NETIF_HOSTNAME         1
 #define LWIP_ICMP                   1       // ping
 #define LWIP_UDP                    1       // DHCP and DNS servers for the PC
 #define LWIP_TCP                    1
 #define LWIP_IPV4                   1
 #define LWIP_IPV6                   0
-#define LWIP_SINGLE_NETIF           1
+#define LWIP_SINGLE_NETIF           0       // USB and Wi-Fi
 #define LWIP_NETIF_LINK_CALLBACK    0
 #define ETH_PAD_SIZE                0
 #define LWIP_IP_ACCEPT_UDP_PORT(p)  ((p) == PP_NTOHS(67))   // DHCP before the PC has an address

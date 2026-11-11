@@ -20,6 +20,7 @@
 #include "timer.h"
 #include "uart.h"
 #include "user.h"
+#include "wifi.h"
 #ifndef NO_USB
 #include "net.h"
 #include "remote.h"
@@ -311,6 +312,8 @@ static void cmd_help(void) {
                  "  apt       the same as pkg (apt install -y N, apt show N ...)\n"
                  "  net       USB network status (the Pi is 192.168.7.1)\n"
                  "  passwd    set the SSH password\n"
+                 "  wifi      Wi-Fi: wifi scan | connect NAME [PASSWORD] | status | disconnect\n"
+                 "  ping IP   send 4 pings (e.g. ping 192.168.7.2)\n"
                  "  NAME &    run a program in the background\n"
                  "  ps        running programs;  kill PID  stops one;  fg PID  brings it back\n"
                  "  Ctrl+C    stops the program in front\n"
@@ -1247,6 +1250,7 @@ int main(void) {
 #ifndef NO_USB
     ssh_init();                     // the host key is kept in MyFS
 #endif
+    wifi_boot();                    // a saved Wi-Fi network: connect in the background
     console_puts("\n");
     console_puts(banner);
     print_storage_status();
@@ -1329,6 +1333,10 @@ static void shell_loop(void) {
             apt_command(arg);
         } else if (command(line, "net")) {
             cmd_net();
+        } else if ((arg = command(line, "wifi"))) {
+            wifi_command(arg);
+        } else if ((arg = command(line, "ping"))) {
+            ping_command(arg);
         } else if (command(line, "passwd")) {
             cmd_passwd();
         } else if (command(line, "exit") || command(line, "logout")) {

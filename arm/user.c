@@ -16,6 +16,7 @@
 #include "print.h"
 #include "proc.h"
 #include "../csdk/myos_info.h"
+#include "wifi.h"
 #ifndef NO_USB
 #include "broadcom/vcmailbox.h"
 #include "net.h"
@@ -106,6 +107,7 @@ enum {
 enum {                          // MyFS v2 folders (csdk/myos.h): from 32 on
     SYS_MKDIR = 32, SYS_RMDIR, SYS_RENAME, SYS_STAT, SYS_READDIR, SYS_CHDIR, SYS_GETCWD
 };
+#define SYS_WIFI 48                         // (a fixed number: csdk/myos.h)
 
 static int64_t sys_procinfo(uint64_t index, uint64_t addr) {
     if (!user_range(addr, sizeof(struct myos_procinfo))) return -1;
@@ -306,6 +308,8 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
             return sys_sysinfo(a);
         case SYS_KILL:
             return proc_kill((int)a);
+        case SYS_WIFI:
+            return wifi_syscall(a, b, c);
         case SYS_KEYNOW: {                          // a key if one is waiting, else -1
             if (!is_foreground()) {
                 console_poll();
@@ -396,9 +400,21 @@ void kernel_fault(trapframe_t *f) {
         print_hex(f->x[i], 16);
         if (i % 3 == 2 || i == 30) console_putc('\n');
     }
-    console_puts("\n  The system has been halted. Please restart the Pi.\n");
+    console_puts("\n  The system has been halted. Please restart the Pi\n"
+                 "  (or press R on the serial / USB terminal to restart it).\n");
+    if (proc_current()) proc_current()->tty = 0;    // keys now come from the serial ports
     for (;;) {                                      // keep USB alive so the text arrives
         console_service();
         led_panic_step(millis());
+        int c = console_getc_nowait();              // (polled: no switching now)
+        if (c == 'r' || c == 'R') {
+#ifdef PI4
+            volatile uint32_t *pm = (volatile uint32_t *)0xFE100000UL;
+#else
+            volatile uint32_t *pm = (volatile uint32_t *)0x3F100000UL;
+#endif
+            pm[0x24 / 4] = 0x5A000000u | 10;        // watchdog: fires in ~150 microseconds
+            pm[0x1C / 4] = 0x5A000000u | (pm[0x1C / 4] & ~0x30u) | 0x20;    // full reset
+        }
     }
 }

@@ -32,6 +32,46 @@ struct myos_sysinfo {
     uint32_t terminals_open;
 };
 
+/* SYS_WIFI (MyOS Pi): sys_wifi(op, a, b) with op = one of these */
+enum {
+    MYOS_WIFI_STATUS,       /* (struct myos_wifi_status *) -> 0 */
+    MYOS_WIFI_SCAN,         /* start a scan (results come in while it runs) -> 0, or -1 */
+    MYOS_WIFI_RESULT,       /* (index, struct myos_wifi_net *) -> 0, or -1 past the end */
+    MYOS_WIFI_CONNECT,      /* (struct myos_wifi_connect *) start joining -> 0, or -1 */
+    MYOS_WIFI_DISCONNECT,
+    MYOS_WIFI_FORGET,       /* (ssid) drop it from the saved networks -> 0, or -1 */
+    MYOS_WIFI_SAVED         /* (index, char ssid[33]) a saved network -> 0, or -1 past the end */
+};
+
+/* state: -1 no Wi-Fi chip, 0 off, 1 starting, 2 on (not connected), 3 joining,
+ * 4 joined (asking for an address), 5 online (has an IP address) */
+struct myos_wifi_status {
+    int32_t state;
+    int32_t scanning;       /* 1 while a scan runs */
+    int32_t rssi;           /* dBm, while connected */
+    int32_t channel;
+    char ssid[33];
+    char ip[16];
+    char gateway[16];
+    char mac[18];
+    char message[64];       /* the last thing that happened, for people */
+};
+
+/* security: 0 open, 1 WEP, 2 WPA, 3 WPA2, 4 WPA3 only (not supported) */
+struct myos_wifi_net {
+    int32_t rssi;
+    int32_t channel;
+    int32_t security;
+    int32_t saved;          /* 1 if it is a saved network */
+    char ssid[33];
+    uint8_t bssid[6];
+};
+
+struct myos_wifi_connect {
+    char ssid[33];
+    char password[64];      /* "" for an open network; 8-63 characters for WPA/WPA2 */
+};
+
 /* SYS_STAT (MyFS v2 folders) */
 struct myos_stat {
     uint32_t type;          /* 1 file, 2 folder */

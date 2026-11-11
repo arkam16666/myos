@@ -52,6 +52,9 @@ SD = [
     ("cat (own file)",  "cat pi.txt",             ["made on a pi"]),
     ("rm",              "rm hello.py",            ["Removed hello.py"]),
     ("rm gone",         "cat hello.py",           ["No such file: hello.py"]),
+    ("wifi (no chip)",  "wifi scan",              ["No Wi-Fi chip found"]),
+    ("wifi status",     "wifi",                   ["Wi-Fi:    no Wi-Fi chip", "Saved:    (none)"]),
+    ("ping (no net)",   "ping 10.0.0.1",          ["No network in this build"]),
 ]
 
 PROGRAMS = [
@@ -97,7 +100,8 @@ SD_AFTER_REBOOT = [
 
 PANIC = [
     ("boot",            None,                     ["myos> "]),
-    ("kernel panic",    "crash",                  ["KERNEL PANIC", "Undefined Instruction", "x30"]),
+    ("kernel panic",    "crash",                  ["KERNEL PANIC", "Undefined Instruction", "x30", "press R"]),
+    ("R restarts",      "R",                      ["for Raspberry Pi (ARM64)", "myos> "], 6),
 ]
 
 

@@ -12,9 +12,11 @@
 #include "lwip/timeouts.h"
 #include "lwip/etharp.h"
 #include "lwip/ethip6.h"
+#include "lwip/udp.h"
 #include "net.h"
 #include "timer.h"
 #include "tusb.h"
+#include "wifi.h"
 
 #define INIT_IP4(a, b, c, d) { PP_HTONL(LWIP_MAKEU32(a, b, c, d)) }
 
@@ -34,6 +36,7 @@ static int busy, deferred;
 
 void net_lock(void) { busy++; }
 void net_unlock(void) { busy--; }
+int net_busy(void) { return busy; }
 
 static dhcp_entry_t entries[] = {
     { {0}, INIT_IP4(192, 168, 7, 2), 24 * 60 * 60 },
@@ -143,6 +146,8 @@ void net_init(void) {
     netif_set_default(netif);
     dhserv_init(&dhcp_config);
     dnserv_init(IP_ADDR_ANY, 53, dns_query);
+    // the DHCP and DNS servers are for the PC on the USB cable only, never for Wi-Fi
+    for (struct udp_pcb *u = udp_pcbs; u; u = u->next) udp_bind_netif(u, netif);
     started = 1;
 }
 
@@ -155,6 +160,7 @@ void net_poll(void) {
         deferred = 0;
         tud_network_recv_renew();
     }
+    wifi_poll();                                // and frames from the Wi-Fi chip
 }
 
 int net_link_up(void) {

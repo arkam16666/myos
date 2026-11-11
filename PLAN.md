@@ -128,7 +128,8 @@
 | 4.3 | Network: driver + IP + `ping` → TCP → ดาวน์โหลดแพ็กเกจ | ใหญ่มาก | บน Pi Zero 2 W ทำเป็น USB network ได้ เพราะมี TinyUSB แล้ว |
 | 4.4 | HDMI + คีย์บอร์ด USB บน Pi | ใหญ่ | ให้ Pi ใช้งานได้โดยไม่ต้องต่อคอม |
 | 4.5 | บูต x86 บนเครื่องจริงผ่าน UEFI | กลาง | |
-| 4.7 | รันโปรแกรม Linux (เป้าหมาย: แอปจาก `apt`) | ใหญ่มาก | ✅ ขั้นแรก: โปรแกรม static เช่น BusyBox |
+| 4.7 | Wi-Fi บน Pi Zero 2 W (ชิป CYW43436 ผ่าน SDIO) | ใหญ่ | ดูหัวข้อ 4.7 ด้านล่าง |
+| 4.8 | รันโปรแกรม Linux (เป้าหมาย: แอปจาก `apt`) | ใหญ่มาก | ✅ ขั้นแรก: โปรแกรม static เช่น BusyBox |
 
 ตอนนี้ทำเฉพาะ ARM (Pi) ก่อน ส่วน 4.1 และ 4.5 ของ x86 พักไว้ ลำดับ: 4.3 → 4.4 → 4.2
 
@@ -150,6 +151,17 @@
   - เสร็จเมื่อ: SSH 2 หน้าต่างพร้อมกันเห็นแค่ของตัวเอง ✅ (ทดสอบบน Pi จริง)
 - [ ] **4.2.5** แบ่งจอแบบ tmux ในหน้าต่างเดียว
 
+### 4.7 Wi-Fi บน Pi Zero 2 W
+- [x] **4.7.1** SDIO driver บน EMMC (GPIO 34-39 ALT3, WL_ON = GPIO 41): CMD5/3/7, CMD52/53, bus 4 บิต 25 MHz (SD card ย้ายไป SDHOST แล้ว)
+  - เสร็จเมื่อ: Pi จริงเจอชิป ✅ (chip ID 0xA9A6 rev 2 = CYW43436)
+- [x] **4.7.2** ปลุกชิป: backplane, หยุด/รัน ARM ในชิป, โหลด firmware + NVRAM + CLM blob จาก MyFS (ไฟล์ดาวน์โหลดด้วย `tools/get-deps.ps1`)
+  - เสร็จเมื่อ: firmware รัน ✅ (`wifi log`: RTE (SDIO-CDC) 9.88.4.77 on BCM43430 r2)
+- [x] **4.7.3** ช่องคำสั่ง BCDC/ioctl: เวอร์ชัน firmware, MAC, `wifi scan` (ชื่อ/สัญญาณ/ช่อง/ความปลอดภัย)
+  - เสร็จเมื่อ: Pi จริงสแกนเจอเครือข่ายรอบบ้าน ✅ (5-6 เครือข่าย, WPA2, ช่อง 1-11)
+- [ ] **4.7.4** เข้า WPA2-PSK ด้วย supplicant ในชิป, frame ข้อมูลเป็น netif ที่สองของ lwIP, DHCP client, `ping` (ทดสอบแล้ว: auth/assoc/link ผ่าน, รหัสผิดถูกจับได้; ยังไม่ได้ทดสอบกับรหัสที่ถูก)
+- [ ] **4.7.5** คำสั่ง `wifi` ครบ (scan/connect/status/disconnect/forget), จำเครือข่ายใน `wifi.cfg`, ต่อเองตอนบูต, แอป `wifiman` เต็มจอ (ทดสอบบน Pi จริงแล้ว: scan, forget, ต่อเองตอนบูต, wifiman; เหลือ connect ที่สำเร็จจริง)
+- [ ] **4.7.6** SDIO 50 MHz (high speed: ตอนนี้เขียนแล้ว CRC ผิด จึงใช้ 25 MHz), Wi-Fi บน Pi 4
+
 ### 4.6 แอปและภาษาเพิ่ม (ให้รู้สึกเหมือน Ubuntu)
 - [x] **4.6.1** JavaScript: QuickJS เป็นแพ็กเกจ `node` (`pkg install nodejs` ก็ได้) REPL, `node -e/-p`, `node app.js`, ES module, `require('fs'/'path'/'os'/...)`
   - เสร็จเมื่อ: `node -e "console.log(1+2)"` ได้ ✅ (tests/qemu_langs.py 17 ข้อ)
@@ -162,20 +174,20 @@
 - [ ] **4.6.7** C compiler บน Pi (TinyCC มี backend ARM64) ให้เขียน C แล้วคอมไพล์บน MyOS ได้
 - [ ] **4.6.8** วันที่จริง: เอาเวลาจากคอมผ่าน USB network (HTTP `Date` / NTP) ให้ `cal`, `date`, `Date()` ถูก
 
-### 4.7 โปรแกรม Linux บน Pi (เป้าหมาย: แอปจาก apt)
+### 4.8 โปรแกรม Linux บน Pi (เป้าหมาย: แอปจาก apt)
 แอปใน `.deb` คือโปรแกรม Linux จึงให้ MyOS รันไฟล์ ELF ของ Linux ได้โดยจำลอง system call ของ Linux (`arm\linux.c`)
-- [x] **4.7.1** ตัวโหลด ELF64 (ET_EXEC และ static PIE), stack เริ่มต้นแบบ Linux (argc/argv/envp/auxv), แผนผังหน่วยความจำแบบ Linux (โปรแกรม + brk ที่ 0x400000, mmap + stack ใน GB ที่สอง), เก็บ TPIDR_EL0 ต่อโปรเซส
-- [x] **4.7.2** system call ของ Linux ราว 110 ตัว: ไฟล์บน MyFS, mmap/brk, เวลา, uname, getrandom ... ตัวที่ไม่มีตอบ -ENOSYS, `strace PROG` แสดงทุก system call
-- [x] **4.7.3** fork/vfork/execve/wait4, pipe, signal handler จริง (signal frame + rt_sigreturn), termios, ppoll
+- [x] **4.8.1** ตัวโหลด ELF64 (ET_EXEC และ static PIE), stack เริ่มต้นแบบ Linux (argc/argv/envp/auxv), แผนผังหน่วยความจำแบบ Linux (โปรแกรม + brk ที่ 0x400000, mmap + stack ใน GB ที่สอง), เก็บ TPIDR_EL0 ต่อโปรเซส
+- [x] **4.8.2** system call ของ Linux ราว 110 ตัว: ไฟล์บน MyFS, mmap/brk, เวลา, uname, getrandom ... ตัวที่ไม่มีตอบ -ENOSYS, `strace PROG` แสดงทุก system call
+- [x] **4.8.3** fork/vfork/execve/wait4, pipe, signal handler จริง (signal frame + rt_sigreturn), termios, ppoll
   - เสร็จเมื่อ: `busybox sh` ใช้ pipe, redirect, `$(...)`, `trap`, Ctrl+C ได้ และ `vi` แก้ไฟล์ได้ ✅
-- [x] **4.7.4** `/proc` จำลอง (meminfo, stat, uptime, PID/stat ...) และ statfs: `ps`, `top`, `free`, `df` ใช้ได้
-- [x] **4.7.5** แพ็กเกจชนิด linux (`pkg.c`, `mkpkg.py`, `repo.py`), BusyBox 1.36.1 จาก Alpine (`get-deps.ps1` ตรวจ SHA-256), พิมพ์ชื่อคำสั่งของ BusyBox ได้เลย (`vi` = `busybox vi`)
+- [x] **4.8.4** `/proc` จำลอง (meminfo, stat, uptime, PID/stat ...) และ statfs: `ps`, `top`, `free`, `df` ใช้ได้
+- [x] **4.8.5** แพ็กเกจชนิด linux (`pkg.c`, `mkpkg.py`, `repo.py`), BusyBox 1.36.1 จาก Alpine (`get-deps.ps1` ตรวจ SHA-256), พิมพ์ชื่อคำสั่งของ BusyBox ได้เลย (`vi` = `busybox vi`)
   - เสร็จเมื่อ: `pkg install busybox` แล้วใช้คำสั่งแบบ Ubuntu ได้ ✅ (tests/qemu_linux.py 28 ข้อ ใน QEMU)
-- [ ] **4.7.6** ทดสอบบน Pi จริง (build แบบ USB, ผ่าน SSH/telnet)
-- [ ] **4.7.7** ตัวแปลง `.deb` → แพ็กเกจ MyOS (แตก `data.tar` เลือกไฟล์ ELF static) เช่น `tools\deb2pkg.py`
-- [ ] **4.7.8** โปรแกรม dynamic (ส่วนใหญ่ใน apt): โหลด `ld-linux-aarch64.so.1` + glibc `.so` ต้องมี mmap ไฟล์จริงแบบแชร์หน้า และไฟล์ใน `/lib`, `/usr/lib`, `/etc` (MyFS v2 มีโฟลเดอร์แล้ว)
-- [ ] **4.7.9** thread (clone แบบ CLONE_VM/CLONE_THREAD, futex จริง) สำหรับโปรแกรมที่ใช้ pthread
-- [ ] **4.7.10** socket สำหรับโปรแกรม Linux (ผ่าน lwIP) เช่น `wget`, `nc`
+- [ ] **4.8.6** ทดสอบบน Pi จริง (build แบบ USB, ผ่าน SSH/telnet)
+- [ ] **4.8.7** ตัวแปลง `.deb` → แพ็กเกจ MyOS (แตก `data.tar` เลือกไฟล์ ELF static) เช่น `tools\deb2pkg.py`
+- [ ] **4.8.8** โปรแกรม dynamic (ส่วนใหญ่ใน apt): โหลด `ld-linux-aarch64.so.1` + glibc `.so` ต้องมี mmap ไฟล์จริงแบบแชร์หน้า และไฟล์ใน `/lib`, `/usr/lib`, `/etc` (MyFS v2 มีโฟลเดอร์แล้ว)
+- [ ] **4.8.9** thread (clone แบบ CLONE_VM/CLONE_THREAD, futex จริง) สำหรับโปรแกรมที่ใช้ pthread
+- [ ] **4.8.10** socket สำหรับโปรแกรม Linux (ผ่าน lwIP) เช่น `wget`, `nc`
 
 ---
 

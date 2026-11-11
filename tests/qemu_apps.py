@@ -67,6 +67,7 @@ TESTS = {
                   ["words per minute", "Average:"]),
     "mathquiz":  ("mathquiz", [line("1")] * 10, ["/10 right"]),
     "htop":      ("htop", [3, DOWN, 1, "q"], ["MyOS htop", "CPU [", "Mem [", "PID TTY", "htop"]),
+    "wifiman":   ("wifiman", [3, "q"], ["MyOS Wi-Fi manager", "no Wi-Fi chip"]),
     "rps":       ("rps", [line(c) for c in "rpsrpsrpsrpsrpsrpsrpsrpsrpsrps"] + [line("q")], ["score  you"]),
     "neofetch":  ("neofetch", [], ["MyOS Pi (ARM64)", "Memory", "MiB /", "MicroPython"]),
     "cal":       ("cal 11 2026", [], ["November 2026", "29 30", "B.E. 2569"]),
