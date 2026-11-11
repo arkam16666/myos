@@ -16,7 +16,9 @@ $deps = @(
     @{ Path = 'third_party/monocypher'; Url = 'https://github.com/LoupVaillant/Monocypher.git'
        Commit = '0d85f98c9d9b0227e42cf795cb527dff372b40a4' },   # cryptography for SSH (4.0.2)
     @{ Path = 'third_party/lua'; Url = 'https://github.com/lua/lua.git'
-       Commit = '1ab3208a1fceb12fca8f24ba57d6e13c5bff15e3' }    # Lua 5.4.7 (package 'lua')
+       Commit = '1ab3208a1fceb12fca8f24ba57d6e13c5bff15e3' },   # Lua 5.4.7 (package 'lua')
+    @{ Path = 'third_party/quickjs'; Url = 'https://github.com/bellard/quickjs.git'
+       Commit = 'e585640ffa2cf88ce7c2d587583c6fe15928ec2f' }    # QuickJS JavaScript (package 'node')
 )
 
 foreach ($d in $deps) {

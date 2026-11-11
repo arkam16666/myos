@@ -77,6 +77,8 @@ float floorf(float);
 float sqrtf(float);
 float fabsf(float);
 long lround(double);
+long lrint(double);
+long long llrint(double);
 
 #define fabs(x)  __builtin_fabs(x)
 #define fabsf(x) __builtin_fabsf(x)

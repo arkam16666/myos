@@ -2,6 +2,7 @@
  * No clock chip on the Pi: time() = 1 Jan 2000 00:00 UTC + seconds since start. */
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
 #include <time.h>
 #include "../myos.h"
 
@@ -55,6 +56,8 @@ struct tm *gmtime_r(const time_t *t, struct tm *tm) {
     tm->tm_mday = d;
     tm->tm_yday = (int)(days_from_civil(y, m, d) - days_from_civil(y, 1, 1));
     tm->tm_isdst = 0;
+    tm->tm_gmtoff = 0;
+    tm->tm_zone = "UTC";
     return tm;
 }
 
@@ -151,4 +154,21 @@ char *asctime(const struct tm *tm) {
 
 char *ctime(const time_t *t) {
     return asctime(localtime(t));
+}
+
+/* finer clocks, in steps of one timer tick (10 ms) */
+int clock_gettime(clockid_t clk, struct timespec *ts) {
+    unsigned long t = sys_ticks();
+    ts->tv_sec = (time_t)(t / 100) + (clk == CLOCK_REALTIME ? EPOCH_2000 : 0);
+    ts->tv_nsec = (long)(t % 100) * 10000000L;
+    return 0;
+}
+
+int gettimeofday(struct timeval *tv, void *tz) {
+    struct timespec ts;
+    (void)tz;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    tv->tv_sec = ts.tv_sec;
+    tv->tv_usec = ts.tv_nsec / 1000;
+    return 0;
 }

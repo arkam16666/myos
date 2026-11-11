@@ -506,6 +506,16 @@ static int install(const char *name, int from_repo, int depth) {
     return install_buffer(len, depth);
 }
 
+// other names people type for a package: pkg install nodejs -> node
+static const char *pkg_alias(const char *name) {
+    static const char *const alias[][2] = {
+        { "nodejs", "node" }, { "quickjs", "node" }, { "qjs", "node" }, { "js", "node" },
+    };
+    for (size_t i = 0; i < sizeof alias / sizeof alias[0]; i++)
+        if (strcmp(name, alias[i][0]) == 0) return alias[i][1];
+    return name;
+}
+
 static void pkg_install(const char *args) {
     if (!*args) {
         console_puts(usage);
@@ -515,7 +525,7 @@ static void pkg_install(const char *args) {
         char name[16];
         args = word(args, name, sizeof name);
         while (*args == ' ') args++;
-        if (name[0]) install(name, 0, 0);
+        if (name[0]) install(pkg_alias(name), 0, 0);
     }
 }
 

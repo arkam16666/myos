@@ -16,6 +16,8 @@ void *malloc(size_t n);
 void *calloc(size_t n, size_t size);
 void *realloc(void *p, size_t n);
 void free(void *p);
+size_t malloc_usable_size(void *p);
+#define alloca(n) __builtin_alloca(n)
 
 void abort(void) __attribute__((noreturn));
 void exit(int code) __attribute__((noreturn));

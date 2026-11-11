@@ -106,6 +106,11 @@ $ports = @{
     # Lua 5.4: everything in third_party\lua except the test library
     'lua' = { Get-ChildItem ../third_party/lua -Filter 'l*.c' | Where-Object Name -ne 'ltests.c' |
               ForEach-Object { "../third_party/lua/$($_.Name)" } }
+    # JavaScript: QuickJS engine + our Node-like front end (ports\node\node.c instead of qjs.c)
+    'node' = { if (Test-Path ../third_party/quickjs/quickjs.c) {
+              @('-Os', '-include', '../ports/node/config.h', '-I../ports/node', '-I../third_party/quickjs',
+                '../ports/node/node.c') +
+              (@('quickjs', 'libregexp', 'libunicode', 'cutils', 'dtoa') | ForEach-Object { "../third_party/quickjs/$_.c" }) } }
 }
 foreach ($name in $ports.Keys) {
     $src = & $ports[$name]
