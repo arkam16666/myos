@@ -91,6 +91,29 @@ ssh myos@192.168.7.1
 - OpenSSH 10 ขึ้นไปจะเตือนว่า "not using a post-quantum key exchange" เป็นแค่คำเตือน ใช้งานได้ปกติ
 - host key อยู่ในไฟล์ `ssh_host_ed25519.key` ส่วนรหัสผ่านเก็บเป็น hash ใน `ssh_password` บน MyFS (ถ้า `format` ใหม่ host key จะเปลี่ยน ssh จะเตือน ให้ลบบรรทัด 192.168.7.1 ออกจาก `%USERPROFILE%\.ssh\known_hosts`)
 
+**ติดตั้งแอปแบบ apt** (ผ่าน USB network): บนคอมเปิดคลังแอปทิ้งไว้
+```powershell
+python tools\repo.py
+```
+แล้วบน Pi:
+```
+pkg update              ดึงรายการแอปจากคอม
+pkg search [คำ]          ดูว่ามีแอปอะไรบ้าง (* = ติดตั้งแล้ว)
+pkg install snake 2048  ติดตั้ง (แอป Python จะติดตั้ง python ให้เองถ้ายังไม่มี)
+pkg remove snake        ลบ
+pkg upgrade             อัปเดตแอปที่มีเวอร์ชันใหม่
+pkg list                แอปที่อยู่ในเครื่อง
+```
+แอปที่มีตอนนี้ (33 ตัว):
+- **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps
+- **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf
+- **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz
+- **โปรแกรม C เดิม:** calc, cdemo, countdown, crashme, fortune, guess, python
+
+เขียนแอปเพิ่มเองได้: วางไฟล์ `.py` ใน `apps\py\` ใส่บรรทัด `# @version 1.0` และ `# @description ...` แล้วเปิด `tools\repo.py` ใหม่ แอปใช้โมดูล `myos` ได้: `myos.key()` (อ่านปุ่มไม่ต้องรอ Enter), `myos.getkey()`, `myos.clear()`, `myos.move(x, y)`, `myos.cursor(on)`, `myos.ticks()` ทดสอบแอปทั้งหมดใน QEMU ด้วย `python tests\qemu_apps.py`
+
+ข้อจำกัด: MyFS ตอนนี้เก็บได้สูงสุด 64 ไฟล์ (จะแก้ในข้อ 3.4 MyFS v2)
+
 **ส่งไฟล์เข้า Pi ผ่าน USB** (แพ็กเกจ, ไฟล์ `.py` ฯลฯ):
 ```powershell
 powershell -ExecutionPolicy Bypass -File arm\push-pi.ps1 -Packages            # แพ็กเกจทั้งหมดสำหรับ Pi

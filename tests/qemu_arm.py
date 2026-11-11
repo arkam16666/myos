@@ -240,8 +240,8 @@ def main():
                                                  f"MyFS mounted from myfs.img, {files} file(s)"])]
     sd = [(n, c, [f"{files} file(s)" if e == "2 file(s)" else e for e in x]) for n, c, x in SD]
     failed = run("raspi3b", "raspi3b", image, boot_with_sd + BASIC[1:] + sd + PROGRAMS, sd=card)
-    # after: pi.txt + t.py added, hello.py removed, cdemo + crashme + python installed
-    after = [(n, c, [e.replace("10 file(s)", f"{files + 4} file(s)") for e in x])
+    # after: pi.txt + t.py added, hello.py removed, cdemo + crashme + python installed, pkg.db
+    after = [(n, c, [e.replace("10 file(s)", f"{files + 5} file(s)") for e in x])
              for n, c, x in SD_AFTER_REBOOT]
     failed += run("raspi3b", "raspi3b", image, after, sd=card)
     failed += check_with_myfs_py(card, lba, sectors)

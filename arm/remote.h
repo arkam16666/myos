@@ -9,5 +9,6 @@ int remote_getc(void);                  // a key from the network, or -1
 int remote_take_connect_event(void);    // 1 once after a client connects
 int remote_client(char *out);           // client's address, 0 if nobody
 void remote_logout(void);               // close the telnet session
+int remote_active(void);                // 1 while a telnet client is connected
 
 #endif

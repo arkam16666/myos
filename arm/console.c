@@ -24,6 +24,7 @@ static void ssh_putc(char c) { (void)c; }
 static void ssh_flush(void) {}
 static void ssh_poll(void) {}
 static int ssh_getc(void) { return -1; }
+static int other_terminal(void) { return 0; }
 static const int polled = 0;
 void console_enable_usb(void) {}
 void console_panic_mode(void) {}
@@ -69,13 +70,22 @@ void console_enable_usb(void) {
     usb_on = 1;
 }
 
+// is someone using a faster terminal than the GPIO serial port?
+static int other_terminal(void) {
+    return !polled && (usb_ready() || remote_active() || ssh_active());
+}
+
 void console_panic_mode(void) {
     polled = 1;
 }
 #endif
 
 void console_putc(char c) {
-    uart_putc(c);                   // uart_putc turns '\n' into "\r\n" itself
+    // uart_putc turns '\n' into "\r\n" itself. The GPIO serial port (115200
+    // baud, ~11 KB/s) would slow everything down while someone uses USB or
+    // the network, so then it only gets what fits in its FIFO.
+    if (other_terminal()) uart_putc_nowait(c);
+    else uart_putc(c);
     if (c == '\n') usb_write('\r');
     usb_write(c);
     if (!polled) {                  // the network shells add their own CR

@@ -197,7 +197,7 @@ static void cmd_help(void) {
                  "  write F X write text X into file F\n"
                  "  rm F      delete file F\n"
                  "  format    erase myfs.img, create an empty file system\n"
-                 "  pkg       packages: pkg list | info N | install N | remove N\n"
+                 "  pkg       apps: pkg update | search | install N | remove N | list\n"
                  "  net       USB network status (the Pi is 192.168.7.1)\n"
                  "  passwd    set the SSH password\n"
                  "  exit      leave an SSH or telnet session\n"
@@ -703,7 +703,20 @@ int main(void) {
             char name[MYFS_NAME_MAX + 1];
             const char *args = first_word(line, name);
             if (!myfs_mounted() || run_program(name, args ? args : "") < 0) {
-                console_puts("Unknown command. Type 'help'.\n");
+                if (myfs_mounted() && pkg_python_app(name)) {   // a Python app from pkg
+                    char pyargs[128];
+                    strcpy(pyargs, name);
+                    strcat(pyargs, ".py");
+                    if (args && strlen(args) < sizeof pyargs - 24) {
+                        strcat(pyargs, " ");
+                        strcat(pyargs, args);
+                    }
+                    if (run_program("python", pyargs) < 0) {
+                        console_puts("This is a Python app: install python first (pkg install python).\n");
+                    }
+                } else {
+                    console_puts("Unknown command. Type 'help'.\n");
+                }
             }
         }
     }

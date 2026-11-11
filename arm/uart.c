@@ -52,6 +52,17 @@ void uart_putc(char c) {
     *UART0_DR = (uint32_t)c;
 }
 
+// like uart_putc, but if the transmit FIFO is full the character is dropped
+// (used while a faster terminal - USB or network - is in use)
+void uart_putc_nowait(char c) {
+    if (c == '\n') {
+        uart_putc_nowait('\r');
+    }
+    if (!(*UART0_FR & FR_TXFF)) {
+        *UART0_DR = (uint32_t)c;
+    }
+}
+
 void uart_puts(const char *s) {
     while (*s) {
         uart_putc(*s++);

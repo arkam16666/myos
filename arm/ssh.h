@@ -10,6 +10,7 @@ int ssh_getc(void);                     // a key from the SSH client, or -1
 int ssh_take_connect_event(void);       // 1 once after a shell starts
 int ssh_client(char *out);              // "user@address" of the logged-in client, 0 if none
 void ssh_logout(void);                  // end the SSH session
+int ssh_active(void);                   // 1 while an SSH shell is open
 
 int ssh_password_set(void);
 int ssh_set_password(const char *pw);   // 0 = saved

@@ -18,6 +18,8 @@ python tests\qemu_x86.py
 $x86 = $LASTEXITCODE
 python tests\qemu_arm.py
 $arm = $LASTEXITCODE
+python tests\qemu_apps.py
+$apps = $LASTEXITCODE
 
-if ($x86 -or $arm) { Write-Host "SOME TESTS FAILED" -ForegroundColor Red; exit 1 }
+if ($x86 -or $arm -or $apps) { Write-Host "SOME TESTS FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "ALL TESTS PASSED" -ForegroundColor Green

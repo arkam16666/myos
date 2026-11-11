@@ -39,6 +39,7 @@ SRC_C = \
 	main.c \
 	hal.c \
 	file.c \
+	modmyos.c \
 	crt0.c \
 	mathextra.c \
 	shared/libc/printf.c \
@@ -63,7 +64,7 @@ LIBM_C = $(addprefix lib/libm_dbl/, \
 	tanh.c tgamma.c trunc.c)
 $(BUILD)/lib/libm_dbl/%.o: CFLAGS += -w
 
-SRC_QSTR += file.c shared/readline/readline.c shared/runtime/pyexec.c $(EXTMOD_C)
+SRC_QSTR += file.c modmyos.c shared/readline/readline.c shared/runtime/pyexec.c $(EXTMOD_C)
 
 OBJ += $(PY_CORE_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))

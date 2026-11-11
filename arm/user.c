@@ -114,7 +114,7 @@ int run_program(const char *name, const char *args) {
 enum {
     SYS_EXIT, SYS_PRINT, SYS_PUTC, SYS_GETKEY, SYS_READLINE, SYS_PRINTNUM,
     SYS_TICKS, SYS_SLEEP, SYS_FILESIZE, SYS_READFILE, SYS_WRITEFILE, SYS_DELETE,
-    SYS_LISTFILES
+    SYS_LISTFILES, SYS_KEYNOW
 };
 
 static int getkey(void) {
@@ -204,6 +204,12 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
             if (!user_range(b, MYFS_NAME_MAX + 1) || myfs_entry((int)a, name, &size)) return -1;
             memcpy((void *)b, name, strlen(name) + 1);
             return size;
+        }
+        case SYS_KEYNOW: {                          // a key if one is waiting, else -1
+            int k = console_getc_nowait();
+            if (k == '\r') return '\n';
+            if (k == 127) return 8;
+            return k;
         }
         default:
             return -1;

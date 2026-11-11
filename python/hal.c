@@ -53,6 +53,20 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     size_t n = 0;
     for (size_t i = 0; i < len; i++) {
         char c = str[i];
+#if defined(__aarch64__)
+        // MyOS Pi talks to a real terminal (PuTTY, ssh): it understands
+        // the codes, so only the CR of CR LF is dropped (MyOS adds its own)
+        if (c == '\r' || c == 0) {
+            continue;
+        }
+        buf[n++] = c;
+        if (n == sizeof(buf) - 1) {
+            buf[n] = 0;
+            sys_print(buf);
+            n = 0;
+        }
+        continue;
+#endif
         if (esc_state == 1) {
             esc_state = (c == '[') ? 2 : 0;
             continue;

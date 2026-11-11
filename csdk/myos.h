@@ -12,7 +12,8 @@
 enum {
     SYS_EXIT, SYS_PRINT, SYS_PUTC, SYS_GETKEY,
     SYS_READLINE, SYS_PRINTNUM, SYS_TICKS, SYS_SLEEP,
-    SYS_FILESIZE, SYS_READFILE, SYS_WRITEFILE, SYS_DELETE, SYS_LISTFILES
+    SYS_FILESIZE, SYS_READFILE, SYS_WRITEFILE, SYS_DELETE, SYS_LISTFILES,
+    SYS_KEYNOW      /* MyOS Pi only: a key if one is waiting, else -1 */
 };
 
 #if defined(__aarch64__)
@@ -52,6 +53,7 @@ static inline long sys_readline(char *buf, long n) { return myos_syscall(SYS_REA
 static inline void sys_printnum(unsigned long n)   { myos_syscall(SYS_PRINTNUM, (long)n, 0); }
 static inline unsigned long sys_ticks(void)        { return (unsigned long)myos_syscall(SYS_TICKS, 0, 0); }
 static inline void sys_sleep(unsigned long ticks)  { myos_syscall(SYS_SLEEP, (long)ticks, 0); }
+static inline int  sys_keynow(void)                { return (int)myos_syscall(SYS_KEYNOW, 0, 0); }
 
 /* files on the MyFS disk; every call returns -1 on error */
 static inline long sys_file_size(const char *name) {

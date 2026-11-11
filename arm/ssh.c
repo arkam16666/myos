@@ -957,3 +957,7 @@ void ssh_logout(void) {
 int ssh_host_key_saved(void) {
     return host_saved;
 }
+
+int ssh_active(void) {
+    return client != NULL && s.shell;
+}

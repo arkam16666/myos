@@ -198,3 +198,7 @@ int remote_client(char *out) {
     strcpy(out, ipaddr_ntoa(&client_ip));
     return 1;
 }
+
+int remote_active(void) {
+    return client != NULL;
+}
