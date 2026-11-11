@@ -117,6 +117,7 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 |---|---|---|
 | `lua` | Lua 5.4.7 ตัวจริง (port จาก C) | `lua`, `lua -e "print(2^10)"`, `lua game.lua` |
 | `node` | JavaScript (QuickJS 2026-06-04 ตัวจริง สั่งแบบ Node.js) | `node`, `node -e "console.log(2**10)"`, `node app.js` |
+| `npm` | ลงแพ็กเกจ JavaScript จาก npm (ใช้กับ `node`) | `npm install left-pad`, `npm ls` |
 | `python` | MicroPython (Python 3) | `python`, `python hello.py` |
 | `basic` | BASIC แบบมีเลขบรรทัด | `10 PRINT "HI"` แล้ว `RUN`, `SAVE "a.bas"`, `basic a.bas` |
 | `scheme` | Scheme (Lisp) | `(define (sq x) (* x x))` |
@@ -127,9 +128,26 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 
 **JavaScript** (`pkg install node` หรือ `pkg install nodejs`): เครื่องยนต์ QuickJS ของจริง (ES2023+: class, async/await, BigInt, Map/Set, module) กับหน้าบ้านแบบ Node ที่เขียนเอง
 - `node` เปิด REPL (พิมพ์หลายบรรทัดได้, `await` ได้, `.exit` ออก), `node -e "..."`, `node -p "1+2"`, `node app.js a b` (แบบ CommonJS), ไฟล์ `.mjs` หรือที่มี `import` รันเป็น ES module
-- มี `console.log/error/table/time`, `print`, `prompt("ชื่อ? ")` (อ่านบรรทัดจากคีย์บอร์ด), `setTimeout/setInterval`, `process.argv/exit/env`, `require('fs')` (`readFileSync`, `writeFileSync`, `readdirSync`, `existsSync`, `unlinkSync` ...), `path`, `os`, `util`, `events`, `readline`, `assert`, `require('./mylib')` และ `import ... from 'fs'`
-- ไม่มี: เครือข่าย (`http`), `child_process`, `Buffer` (ใช้ `Uint8Array` แทน), โมดูล `std`/`os` ของ qjs (ต้องใช้ Unix), Intl/Temporal; เรียกฟังก์ชันซ้อนลึกได้ราว 3,300 ชั้น
-- โปรแกรมใหญ่ 726 KB (ใหญ่สุดที่ MyOS รับได้คือ 1 MB)
+- มี `console.log/error/table/time`, `print`, `prompt("ชื่อ? ")` (อ่านบรรทัดจากคีย์บอร์ด), `setTimeout/setInterval`, `process.argv/exit/env/cwd`, `require('fs')` (`readFileSync`, `writeFileSync`, `readdirSync`, `existsSync`, `mkdirSync`, `rmSync`, `statSync` ... ใช้โฟลเดอร์ได้บน MyFS v2), `path`, `os`, `util`, `events`, `readline`, `assert`, `tty`, `crypto` (แค่ `createHash` sha1/sha512), `require('./mylib')`, แพ็กเกจใน `node_modules` (หาแบบ Node: ไล่โฟลเดอร์ขึ้นไป, `main`/`exports` ใน package.json, `index.js`, `.json`) และ `import ... from 'fs'`; `require()` แพ็กเกจที่เป็น ES module ล้วนได้ (ได้ namespace แบบ Node 22)
+- ไม่มี: เครือข่าย (`http`), `child_process`, `Buffer` (ใช้ `Uint8Array` แทน), `stream`, `crypto.randomBytes` (โปรแกรมยังไม่มีแหล่งเลขสุ่มที่ปลอดภัย), โมดูล `std`/`os` ของ qjs (ต้องใช้ Unix), Intl/Temporal; เรียกฟังก์ชันซ้อนลึกได้ราว 3,300 ชั้น
+- โปรแกรมใหญ่ 750 KB (ใหญ่สุดที่ MyOS รับได้คือ 1 MB)
+
+**npm** (`pkg install npm`, ใช้คู่กับ `node`): ลงแพ็กเกจ JavaScript จาก registry.npmjs.org ตัวจริงผ่าน Wi-Fi ลงใน `./node_modules` แล้ว `require()` ได้เลย ต้องเป็น MyFS v2 (มีโฟลเดอร์: พิมพ์ `fsupgrade` ถ้ายังเป็น v1)
+```
+npm init -y                  สร้าง package.json
+npm install left-pad         ลงแพ็กเกจ (กับแพ็กเกจที่มันต้องใช้) และจดลง package.json
+npm install lodash@^4 ms@2.1.3   ระบุเวอร์ชันได้: ตรงตัว, ^, ~, 1.x, >=, a - b, ||, latest หรือ tag อื่น
+npm install ./my-lib-1.0.0.tgz   ลงจากไฟล์ .tgz (แบบที่ npm pack ทำ)
+npm install                  ลงทุกอย่างที่ package.json ระบุ
+npm ls [--all]               ดูว่าลงอะไรไว้      npm uninstall left-pad   ลบ (และของที่ไม่มีใครใช้แล้ว)
+npm view express             ดูข้อมูลแพ็กเกจ    npm start / npm test / npm run X  (สคริปต์แบบ "node file.js")
+node -e "console.log(require('left-pad')('7', 3, '0'))"
+```
+- ใช้ได้: แพ็กเกจ JavaScript ล้วน (เช่น lodash, chalk, dayjs, ms, left-pad) ทั้งแบบ CommonJS และ ES module, scoped (`@scope/name`), `-D` ลงเป็น devDependencies, `--no-save`, `-g` ลงที่ `/node_modules` (ใช้ได้ทุกโฟลเดอร์)
+- ใช้ไม่ได้: native addon ที่ต้องคอมไพล์ C++ (`binding.gyp`, node-gyp เช่น bcrypt, sqlite3 ของ npm) จะขึ้นว่า "needs a C++ build"; แพ็กเกจที่ต้องใช้ built-in ของ Node ที่ MyOS ไม่มี (`http`, `net`, `stream`, `child_process`, `Buffer` ...) ลงได้แต่รันไม่ได้; สคริปต์ติดตั้ง (`postinstall`) ไม่ถูกรัน; dependency แบบ git/URL; ไฟล์ที่ชื่อยาวเกิน 63 ตัวอักษรหรือมีอักขระนอก ASCII ถูกข้าม (มีคำเตือน)
+- ไม่มีเน็ต: "Wi-Fi not connected? try 'wifi'" แพ็กเกจที่มีรายชื่อเวอร์ชันใหญ่มาก (เกิน ~24 MB เช่น typescript) อาจเกินหน่วยความจำ
+- ความปลอดภัย: MyOS ยังไม่ตรวจใบรับรอง HTTPS (certificate) เลย npm ตรวจไฟล์ .tgz ทุกไฟล์ด้วย sha512 (`dist.integrity`, หรือ sha1 ถ้าไม่มี) แต่ค่า sha512 นั้นก็มาจาก registry ผ่าน HTTPS ที่ไม่ได้ตรวจใบรับรองเหมือนกัน จึงกันไฟล์เสียระหว่างทางได้ แต่กันคนที่ดักกลางทาง (เช่น Wi-Fi สาธารณะ) ไม่ได้; โค้ดจาก npm รันด้วยสิทธิ์เต็มของโปรแกรม ลงเฉพาะแพ็กเกจที่ไว้ใจ
+- โปรแกรม `npm` คือ `node` ตัวเดียวกันที่มี npm (เขียนด้วย JavaScript, `ports/npm/npm.js`) ฝังอยู่ ขนาด 778 KB; gunzip/SHA-512/SHA-1 เขียนเองใน `ports/node/npmlib.c`
 
 **SQLite** (`pkg install sqlite3`): SQLite 3.54.1 ตัวจริง ไฟล์ฐานข้อมูลเก็บบน MyFS
 ```

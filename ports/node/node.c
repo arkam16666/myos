@@ -8,8 +8,12 @@
  *   node -e "code"         run code      node -p "expr"   print its value
  *
  * What scripts get: console.*, print, prompt, process, setTimeout and
- * friends, require('fs' / 'path' / 'os' / 'util' / './file.js'), and the
- * same modules through import. The JavaScript half is in prelude.js.
+ * friends, require('fs' / 'path' / 'os' / 'util' / './file.js' / packages
+ * in node_modules, found the Node way), and the same modules through import.
+ * The JavaScript half is in prelude.js.
+ *
+ * Built a second time with -DNODE_NPM as 'npm' (ports/npm/npm.js runs instead
+ * of a script); npmlib.c has its native helpers (gunzip, SHA-512/SHA-1, JSON scan).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +29,14 @@ static const char prelude_js[] = {
 #embed "prelude.js"
     , 0
 };
+#ifdef NODE_NPM
+static const char npm_js[] = {
+#embed "../npm/npm.js"
+    , 0
+};
+#endif
+
+#include "npmlib.c"
 
 static JSRuntime *rt;
 static JSContext *ctx;
@@ -33,16 +45,25 @@ static int repl_mode;                   /* errors don't end the program */
 /* --------------------------------------------------------------- helpers */
 static void out(const char *s, size_t n) { fwrite(s, 1, n, stdout); }
 
-/* MyFS is flat: "./a.js" and "/a.js" are both "a.js" */
+/* paths go to the kernel as they are: from the current folder, or from / */
 static const char *fs_name(const char *name) {
     while (name[0] == '.' && name[1] == '/') name += 2;
-    while (name[0] == '/') name++;
     return name;
+}
+
+/* 1 file, 2 folder, <0 not there (MYOS_E*) */
+static int path_type(const char *name, uint32_t *size) {
+    struct myos_stat st;
+    long r = *name ? sys_stat(name, &st) : MYOS_ENOENT;
+    if (r < 0) return (int)r;
+    if (size) *size = st.size;
+    return (int)st.type;
 }
 
 /* whole file in memory, 0-terminated; NULL if it isn't there */
 static char *load_file(const char *name, size_t *len) {
     name = fs_name(name);
+    if (path_type(name, NULL) == 2) return NULL;
     long size = sys_file_size(name);
     if (size < 0) return NULL;
     char *buf = malloc((size_t)size + 1);
@@ -333,30 +354,37 @@ static JSValue n_read_file(JSContext *c, JSValueConst this, int argc, JSValueCon
     return r;
 }
 
+/* the bytes of a TypedArray or ArrayBuffer: 1, or 0 if it's neither (no exception left) */
+static int get_bytes(JSContext *c, JSValueConst v, const uint8_t **data, size_t *len) {
+    size_t off, elem, total;
+    *data = NULL;
+    *len = 0;
+    if (!JS_IsObject(v)) return 0;
+    JSValue ab = JS_GetTypedArrayBuffer(c, v, &off, len, &elem);
+    if (!JS_IsException(ab)) {
+        const uint8_t *p = JS_GetArrayBuffer(c, &total, ab);
+        JS_FreeValue(c, ab);                    /* (the typed array keeps it alive) */
+        *data = p ? p + off : NULL;
+        return 1;
+    }
+    JS_FreeValue(c, JS_GetException(c));
+    *data = JS_GetArrayBuffer(c, len, v);
+    if (*data) return 1;
+    JS_FreeValue(c, JS_GetException(c));
+    *len = 0;
+    return 0;
+}
+
 /* write a string or bytes (TypedArray / ArrayBuffer); append if argv[2] */
 static JSValue n_write_file(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
     const char *name = JS_ToCString(c, argv[0]);
     if (!name) return JS_EXCEPTION;
     const char *str = NULL;
     const uint8_t *data;
-    size_t len, off, elem;
-    JSValue abuf = JS_UNDEFINED;
-    if (JS_IsString(argv[1])) {
+    size_t len;
+    if (JS_IsString(argv[1]) || !get_bytes(c, argv[1], &data, &len)) {
         str = JS_ToCStringLen(c, &len, argv[1]);
         data = (const uint8_t *)str;
-    } else if (!JS_IsException(abuf = JS_GetTypedArrayBuffer(c, argv[1], &off, &len, &elem))) {
-        size_t total;
-        data = JS_GetArrayBuffer(c, &total, abuf);
-        if (data) data += off;
-    } else {
-        JS_FreeValue(c, JS_GetException(c));
-        abuf = JS_UNDEFINED;
-        data = JS_GetArrayBuffer(c, &len, argv[1]);
-        if (!data) {
-            JS_FreeValue(c, JS_GetException(c));
-            str = JS_ToCStringLen(c, &len, argv[1]);
-            data = (const uint8_t *)str;
-        }
     }
     JSValue ret = JS_UNDEFINED;
     if (!data && len) ret = JS_EXCEPTION;
@@ -382,15 +410,16 @@ static JSValue n_write_file(JSContext *c, JSValueConst this, int argc, JSValueCo
         free(all);
     }
     if (str) JS_FreeCString(c, str);
-    JS_FreeValue(c, abuf);
     JS_FreeCString(c, name);
     return ret;
 }
 
+/* size of a file, -1 if there is no such file (folders: -1 too) */
 static JSValue n_file_size(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
     const char *name = JS_ToCString(c, argv[0]);
     if (!name) return JS_EXCEPTION;
-    long n = *fs_name(name) ? sys_file_size(fs_name(name)) : -1;
+    uint32_t size = 0;
+    long n = path_type(fs_name(name), &size) == 1 ? (long)size : -1;
     JS_FreeCString(c, name);
     return JS_NewInt64(c, n);
 }
@@ -403,15 +432,197 @@ static JSValue n_unlink(JSContext *c, JSValueConst this, int argc, JSValueConst 
     return r;
 }
 
-static JSValue n_list(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
-    JSValue arr = JS_NewArray(c);
-    char name[48];
-    uint32_t n = 0;
-    for (unsigned long i = 0; sys_list_files(i, name) >= 0; i++) {
-        name[47] = 0;
-        if (name[0]) JS_SetPropertyUint32(c, arr, n++, JS_NewString(c, name));
+/* folders: stat(path) -> {type: 1 file / 2 folder, size} or null */
+static JSValue n_stat(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    const char *name = JS_ToCString(c, argv[0]);
+    if (!name) return JS_EXCEPTION;
+    uint32_t size = 0;
+    int t = path_type(fs_name(name), &size);
+    JS_FreeCString(c, name);
+    if (t < 0) return JS_NULL;
+    JSValue o = JS_NewObject(c);
+    JS_SetPropertyStr(c, o, "type", JS_NewInt32(c, t));
+    JS_SetPropertyStr(c, o, "size", JS_NewInt64(c, size));
+    return o;
+}
+
+/* readdir(path) -> [[name, type, size], ...], or the MYOS_E* error number */
+static JSValue n_readdir(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    const char *name = JS_ToCString(c, argv[0]);
+    if (!name) return JS_EXCEPTION;
+    const char *dir = *fs_name(name) ? fs_name(name) : ".";
+    int t = path_type(dir, NULL);
+    if (t != 2) {
+        JS_FreeCString(c, name);
+        return JS_NewInt32(c, t < 0 ? t : MYOS_ENOTDIR);
     }
+    JSValue arr = JS_NewArray(c);
+    struct myos_dirent d;
+    uint32_t n = 0;
+    for (unsigned long i = 0; sys_readdir(dir, i, &d) == 1; i++) {
+        d.name[63] = 0;
+        JSValue e = JS_NewArray(c);
+        JS_SetPropertyUint32(c, e, 0, JS_NewString(c, d.name));
+        JS_SetPropertyUint32(c, e, 1, JS_NewInt32(c, (int32_t)d.type));
+        JS_SetPropertyUint32(c, e, 2, JS_NewInt64(c, d.size));
+        JS_SetPropertyUint32(c, arr, n++, e);
+    }
+    JS_FreeCString(c, name);
     return arr;
+}
+
+/* mkdir / rmdir / chdir (path) and rename (from, to) -> 0 or a MYOS_E* error number */
+static JSValue n_dirop(JSContext *c, JSValueConst this, int argc, JSValueConst *argv, int magic) {
+    const char *a = JS_ToCString(c, argv[0]);
+    if (!a) return JS_EXCEPTION;
+    const char *b = magic == 3 ? JS_ToCString(c, argv[1]) : NULL;
+    long r = MYOS_ENAME;
+    if (magic == 0) r = sys_mkdir(fs_name(a));
+    else if (magic == 1) r = sys_rmdir(fs_name(a));
+    else if (magic == 2) r = sys_chdir(fs_name(a));
+    else if (b) r = sys_rename(fs_name(a), fs_name(b));
+    JS_FreeCString(c, a);
+    if (b) JS_FreeCString(c, b);
+    return JS_NewInt32(c, (int32_t)r);
+}
+
+static JSValue n_cwd(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    char buf[260];
+    long n = sys_getcwd(buf, sizeof buf);
+    return JS_NewString(c, n > 0 && n < (long)sizeof buf ? buf : "/");
+}
+
+/* ------------------------------------------------------- npm helpers (npmlib.c) */
+static void free_buf(JSRuntime *r, void *opaque, void *ptr) { free(ptr); }
+
+/* fetch(url, max) -> {status, error, body: ArrayBuffer}; error is a MYOS_FETCH_E* number */
+static JSValue n_fetch(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    const char *url = JS_ToCString(c, argv[0]);
+    if (!url) return JS_EXCEPTION;
+    double want = 0;
+    JS_ToFloat64(c, &want, argv[1]);
+    size_t max = want >= 4096 && want <= 64e6 ? (size_t)want : 1 << 20;
+    uint8_t *buf = malloc(max);
+    while (!buf && max > (2 << 20)) buf = malloc(max /= 2);     /* less memory than asked for */
+    if (!buf) { JS_FreeCString(c, url); return JS_ThrowOutOfMemory(c); }
+    struct myos_fetch f;
+    memset(&f, 0, sizeof f);
+    f.url = (uint64_t)(uintptr_t)url;
+    f.buf = (uint64_t)(uintptr_t)buf;
+    f.max = (uint32_t)max;
+    long r = sys_fetch(&f);
+    JS_FreeCString(c, url);
+    JSValue o = JS_NewObject(c);
+    JS_SetPropertyStr(c, o, "status", JS_NewInt32(c, f.status));
+    JS_SetPropertyStr(c, o, "error", JS_NewInt32(c, f.error ? f.error : r < 0 ? (int32_t)r : 0));
+    uint8_t *body = NULL;
+    if (!f.error && r >= 0 && f.len <= max && (body = malloc(f.len ? f.len : 1)))
+        memcpy(body, buf, f.len);               /* (realloc can't shrink: copy what came) */
+    free(buf);
+    if (body) JS_SetPropertyStr(c, o, "body", JS_NewArrayBuffer(c, body, f.len, free_buf, NULL, 0));
+    return o;
+}
+
+/* gunzip(bytes) -> ArrayBuffer; throws if it's broken */
+static JSValue n_gunzip(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    const uint8_t *in;
+    size_t n;
+    if (!get_bytes(c, argv[0], &in, &n)) return JS_ThrowTypeError(c, "gunzip: not bytes");
+    long size = npm_gzip_size(in, n);
+    if (size < 0) return JS_ThrowTypeError(c, "not a gzip file (.tgz)");
+    if (size > 48L << 20) return JS_ThrowRangeError(c, "unpacks to %ld MB: too big for MyOS", size >> 20);
+    uint8_t *out = malloc(size ? (size_t)size : 1);
+    if (!out) return JS_ThrowOutOfMemory(c);
+    long len = npm_gunzip(in, n, out, (size_t)size);
+    if (len < 0) {
+        free(out);
+        return JS_ThrowTypeError(c, len == -3 ? "gzip: CRC mismatch (damaged download)" : "gzip: damaged data");
+    }
+    return JS_NewArrayBuffer(c, out, (size_t)len, free_buf, NULL, 0);
+}
+
+/* hash("sha512" | "sha1", bytes) -> hex */
+static JSValue n_hash(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    const char *alg = JS_ToCString(c, argv[0]);
+    if (!alg) return JS_EXCEPTION;
+    int sha1 = strcmp(alg, "sha1") == 0;
+    JS_FreeCString(c, alg);
+    const uint8_t *in;
+    size_t n;
+    if (!get_bytes(c, argv[1], &in, &n)) return JS_ThrowTypeError(c, "hash: not bytes");
+    uint8_t d[64];
+    char hex[129];
+    size_t dl = sha1 ? 20 : 64;
+    if (sha1) npm_sha1(in, n, d);
+    else npm_sha512(in, n, d);
+    for (size_t i = 0; i < dl; i++) {
+        hex[2 * i] = "0123456789abcdef"[d[i] >> 4];
+        hex[2 * i + 1] = "0123456789abcdef"[d[i] & 15];
+    }
+    return JS_NewStringLen(c, hex, dl * 2);
+}
+
+/* bytes(string) -> Uint8Array (UTF-8) */
+static JSValue n_bytes(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    size_t len;
+    const char *s = JS_ToCStringLen(c, &len, argv[0]);
+    if (!s) return JS_EXCEPTION;
+    JSValue r = JS_NewUint8ArrayCopy(c, (const uint8_t *)s, len);
+    JS_FreeCString(c, s);
+    return r;
+}
+
+/* text(bytes [, start, end]) -> string (UTF-8) */
+static JSValue n_text(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    const uint8_t *in;
+    size_t n;
+    if (!get_bytes(c, argv[0], &in, &n)) return JS_ThrowTypeError(c, "text: not bytes");
+    int64_t a = 0, b = (int64_t)n;
+    if (argc > 1 && !JS_IsUndefined(argv[1])) JS_ToInt64(c, &a, argv[1]);
+    if (argc > 2 && !JS_IsUndefined(argv[2])) JS_ToInt64(c, &b, argv[2]);
+    if (b > (int64_t)n) b = (int64_t)n;
+    if (a < 0) a = 0;
+    if (b < a) b = a;
+    return JS_NewStringLen(c, (const char *)in + a, (size_t)(b - a));
+}
+
+typedef struct { JSContext *c; JSValue arr; uint32_t n; } key_list;
+
+static int collect_key(const char *key, size_t len, size_t value, void *arg) {
+    key_list *k = arg;
+    JS_SetPropertyUint32(k->c, k->arr, k->n++, JS_NewStringLen(k->c, key, len));
+    return 0;
+}
+
+/* jsonPick(bytes, [key, key, ...], keys) -> the JSON text of that value, or
+ * with keys = true the names of its members; undefined if it isn't there */
+static JSValue n_json_pick(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    const uint8_t *in;
+    size_t n;
+    if (!get_bytes(c, argv[0], &in, &n)) return JS_ThrowTypeError(c, "jsonPick: not bytes");
+    const char *s = (const char *)in;
+    size_t at = 0;
+    uint32_t depth = 0;
+    JSValue l = JS_GetPropertyStr(c, argv[1], "length");
+    JS_ToUint32(c, &depth, l);
+    JS_FreeValue(c, l);
+    for (uint32_t i = 0; i < depth && at != JNONE; i++) {
+        JSValue k = JS_GetPropertyUint32(c, argv[1], i);
+        const char *key = JS_ToCString(c, k);
+        JS_FreeValue(c, k);
+        if (!key) return JS_EXCEPTION;
+        at = npm_json_get(s, n, at, key);
+        JS_FreeCString(c, key);
+    }
+    if (at == JNONE) return JS_UNDEFINED;
+    if (JS_ToBool(c, argv[2])) {
+        key_list k = { c, JS_NewArray(c), 0 };
+        npm_json_members(s, n, at, collect_key, &k);
+        return k.arr;
+    }
+    size_t end = npm_json_skip(s, n, at);
+    if (end == JNONE) return JS_UNDEFINED;
+    return JS_NewStringLen(c, s + at, end - at);
 }
 
 static JSValue n_eval(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
@@ -423,6 +634,29 @@ static JSValue n_eval(JSContext *c, JSValueConst this, int argc, JSValueConst *a
     JS_FreeCString(c, src);
     if (file) JS_FreeCString(c, file);
     return r;
+}
+
+/* evalModule(src, name): run ES module code to the end now (require() of an ES module) */
+static JSValue n_eval_module(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    size_t len;
+    const char *src = JS_ToCStringLen(c, &len, argv[0]);
+    if (!src) return JS_EXCEPTION;
+    const char *file = JS_ToCString(c, argv[1]);
+    JSValue f = file ? JS_Eval(c, src, len, file, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY) : JS_EXCEPTION;
+    JS_FreeCString(c, src);
+    if (file) JS_FreeCString(c, file);
+    if (JS_IsException(f)) return f;
+    return await_value(JS_EvalFunction(c, f));
+}
+
+/* detectModule(src): does it use import/export (an ES module)? */
+static JSValue n_detect_module(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
+    size_t len;
+    const char *src = JS_ToCStringLen(c, &len, argv[0]);
+    if (!src) return JS_EXCEPTION;
+    int r = JS_DetectModule(src, len);
+    JS_FreeCString(c, src);
+    return JS_NewBool(c, r);
 }
 
 static JSValue n_read_line(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
@@ -515,7 +749,21 @@ static const JSCFunctionListEntry natives[] = {
     JS_CFUNC_DEF("writeFile", 3, n_write_file),
     JS_CFUNC_DEF("fileSize", 1, n_file_size),
     JS_CFUNC_DEF("unlink", 1, n_unlink),
-    JS_CFUNC_DEF("list", 0, n_list),
+    JS_CFUNC_DEF("stat", 1, n_stat),
+    JS_CFUNC_DEF("readdir", 1, n_readdir),
+    JS_CFUNC_MAGIC_DEF("mkdir", 1, n_dirop, 0),
+    JS_CFUNC_MAGIC_DEF("rmdir", 1, n_dirop, 1),
+    JS_CFUNC_MAGIC_DEF("chdir", 1, n_dirop, 2),
+    JS_CFUNC_MAGIC_DEF("rename", 2, n_dirop, 3),
+    JS_CFUNC_DEF("cwd", 0, n_cwd),
+    JS_CFUNC_DEF("fetch", 2, n_fetch),
+    JS_CFUNC_DEF("gunzip", 1, n_gunzip),
+    JS_CFUNC_DEF("hash", 2, n_hash),
+    JS_CFUNC_DEF("text", 3, n_text),
+    JS_CFUNC_DEF("bytes", 1, n_bytes),
+    JS_CFUNC_DEF("jsonPick", 3, n_json_pick),
+    JS_CFUNC_DEF("evalModule", 2, n_eval_module),
+    JS_CFUNC_DEF("detectModule", 1, n_detect_module),
     JS_CFUNC_DEF("evalScript", 2, n_eval),
     JS_CFUNC_DEF("readLine", 0, n_read_line),
     JS_CFUNC_DEF("setTimer", 3, n_set_timer),
@@ -528,14 +776,21 @@ static const JSCFunctionListEntry natives[] = {
 };
 
 /* --------------------------------------------------------------- ES modules from MyFS */
-static JSValue call_prelude(const char *fn, JSValueConst arg) {
+static JSValue call_prelude2(const char *fn, int argc, JSValueConst *argv) {
     JSValue g = JS_GetGlobalObject(ctx);
     JSValue hidden = JS_GetPropertyStr(ctx, g, "__myos_hooks");
     JSValue f = JS_GetPropertyStr(ctx, hidden, fn);
-    JSValue r = JS_Call(ctx, f, JS_UNDEFINED, 1, &arg);
+    JSValue r = JS_Call(ctx, f, JS_UNDEFINED, argc, argv);
     JS_FreeValue(ctx, f);
     JS_FreeValue(ctx, hidden);
     JS_FreeValue(ctx, g);
+    return r;
+}
+
+/* (takes over arg) */
+static JSValue call_prelude(const char *fn, JSValue arg) {
+    JSValue r = call_prelude2(fn, 1, (JSValueConst *)&arg);
+    JS_FreeValue(ctx, arg);
     return r;
 }
 
@@ -543,53 +798,41 @@ static void set_import_meta(JSValueConst func, const char *name, int is_main) {
     JSModuleDef *m = JS_VALUE_GET_PTR(func);
     JSValue meta = JS_GetImportMeta(ctx, m);
     if (JS_IsException(meta)) return;
-    char url[64];
-    snprintf(url, sizeof url, "file:///%s", fs_name(name));
+    char url[300];
+    snprintf(url, sizeof url, "file://%s%s", name[0] == '/' ? "" : "/", fs_name(name));
     JS_DefinePropertyValueStr(ctx, meta, "url", JS_NewString(ctx, url), JS_PROP_C_W_E);
     JS_DefinePropertyValueStr(ctx, meta, "main", JS_NewBool(ctx, is_main), JS_PROP_C_W_E);
     JS_FreeValue(ctx, meta);
 }
 
+/* import 'x' from module 'base': prelude.js finds the file (./, node_modules ...) */
+static char *module_normalize(JSContext *c, const char *base, const char *name, void *opaque) {
+    (void)opaque;
+    JSValue a[2] = { JS_NewString(c, name), JS_NewString(c, base) };
+    JSValue r = call_prelude2("resolveImport", 2, a);
+    JS_FreeValue(c, a[0]);
+    JS_FreeValue(c, a[1]);
+    if (JS_IsException(r)) return NULL;
+    const char *s = JS_ToCString(c, r);
+    JS_FreeValue(c, r);
+    if (!s) return NULL;
+    char *out = js_strdup(c, s);
+    JS_FreeCString(c, s);
+    return out;
+}
+
+/* its source as an ES module: prelude.js wraps builtins, CommonJS files and JSON */
 static JSModuleDef *module_loader(JSContext *c, const char *name, void *opaque, JSValueConst attrs) {
     (void)opaque;
     (void)attrs;
     size_t len;
-    char *src;
-    JSValue s = call_prelude("builtinModuleSource", JS_NewString(c, name)); /* fs, path, os ... */
-    if (JS_IsString(s)) {
-        const char *t = JS_ToCStringLen(c, &len, s);
-        src = t ? strdup(t) : NULL;
-        if (t) JS_FreeCString(c, t);
-    } else {
-        src = load_file(name, &len);
-        if (!src) {
-            char alt[64];
-            snprintf(alt, sizeof alt, "%s.js", fs_name(name));
-            src = load_file(alt, &len);
-        }
-    }
+    JSValue s = call_prelude("moduleSource", JS_NewString(c, name));
+    if (JS_IsException(s)) return NULL;
+    const char *src = JS_ToCStringLen(c, &len, s);
     JS_FreeValue(c, s);
-    if (!src) {
-        JS_ThrowReferenceError(c, "cannot find module '%s'", name);
-        return NULL;
-    }
-    JSValue func;
-    size_t nl = strlen(name);
-    if (nl > 5 && strcmp(name + nl - 5, ".json") == 0) {  /* JSON: export default the value */
-        JSValue v = JS_ParseJSON(c, src, len, name);
-        free(src);
-        if (JS_IsException(v)) return NULL;
-        JSValue m = call_prelude("jsonModuleSource", v);
-        JS_FreeValue(c, v);
-        const char *t = JS_ToCStringLen(c, &len, m);
-        if (!t) { JS_FreeValue(c, m); return NULL; }
-        func = JS_Eval(c, t, len, name, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-        JS_FreeCString(c, t);
-        JS_FreeValue(c, m);
-    } else {
-        func = JS_Eval(c, src, len, name, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-        free(src);
-    }
+    if (!src) return NULL;
+    JSValue func = JS_Eval(c, src, len, name, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+    JS_FreeCString(c, src);
     if (JS_IsException(func)) return NULL;
     set_import_meta(func, name, 0);
     JSModuleDef *m = JS_VALUE_GET_PTR(func);
@@ -636,7 +879,7 @@ static int run_code(const char *src, int print) {
 }
 
 static int run_file(const char *arg) {
-    char name[64];
+    char name[260];
     size_t len;
     snprintf(name, sizeof name, "%s", fs_name(arg));
     char *src = load_file(name, &len);
@@ -790,7 +1033,7 @@ static int node_main(int argc, char **argv) {
     }
     JS_SetMaxStackSize(rt, stack_size);
     JS_SetHostPromiseRejectionTracker(rt, rejection_tracker, NULL);
-    JS_SetModuleLoaderFunc2(rt, NULL, module_loader, NULL, NULL);
+    JS_SetModuleLoaderFunc2(rt, module_normalize, module_loader, NULL, NULL);
     ctx = JS_NewContext(rt);
     if (!ctx) {
         printf("node: out of memory\n");
@@ -800,7 +1043,11 @@ static int node_main(int argc, char **argv) {
     /* the script name and its arguments: everything after the options */
     const char *code = NULL;
     int print = 0, first = 1;
+#ifdef NODE_NPM
+    if (0) {                                    /* npm: every argument is npm's */
+#else
     if (argc > 1 && argv[1][0] == '-') {
+#endif
         const char *o = argv[1];
         if (!strcmp(o, "-v") || !strcmp(o, "--version")) {
             printf("v%s (QuickJS)\n", JS_VERSION);
@@ -820,7 +1067,12 @@ static int node_main(int argc, char **argv) {
     JS_SetPropertyFunctionList(ctx, natives_obj, natives, sizeof natives / sizeof natives[0]);
     JSValue args = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, args, 0, JS_NewString(ctx, "node"));
+#ifdef NODE_NPM
+    JS_SetPropertyUint32(ctx, args, 1, JS_NewString(ctx, "npm"));       /* argv: node npm install x */
+    for (int i = 1, n = 2; i < argc; i++, n++)
+#else
     for (int i = code ? first : 1, n = 1; i < argc; i++, n++)
+#endif
         JS_SetPropertyUint32(ctx, args, (uint32_t)n, JS_NewString(ctx, argv[i]));
     JS_SetPropertyStr(ctx, natives_obj, "argv", args);
     JS_SetPropertyStr(ctx, natives_obj, "version", JS_NewString(ctx, JS_VERSION));
@@ -831,7 +1083,6 @@ static int node_main(int argc, char **argv) {
         JS_FreeValue(ctx, init);
         init = r;
     }
-    JS_FreeValue(ctx, natives_obj);
     if (JS_IsException(init)) {
         dump_error();
         return 1;
@@ -839,12 +1090,29 @@ static int node_main(int argc, char **argv) {
     JS_FreeValue(ctx, init);
 
     int r = 0;
+#ifdef NODE_NPM
+    /* npm.js is (function (N) { ... return main(); }): run it and wait for it */
+    JSValue npm = JS_Eval(ctx, npm_js, sizeof npm_js - 1, "npm.js", JS_EVAL_TYPE_GLOBAL);
+    if (!JS_IsException(npm)) {
+        JSValue v = JS_Call(ctx, npm, JS_UNDEFINED, 1, (JSValueConst *)&natives_obj);
+        JS_FreeValue(ctx, npm);
+        npm = JS_IsException(v) ? v : await_value(v);
+    }
+    JS_FreeValue(ctx, natives_obj);
+    if (JS_IsException(npm)) {
+        dump_error();
+        r = -1;
+    }
+    JS_FreeValue(ctx, npm);
+#else
+    JS_FreeValue(ctx, natives_obj);
     if (code) r = run_code(code, print);
     else if (argc > 1) r = run_file(argv[1]);
     else {
         repl();
         quit(0);
     }
+#endif
     if (r == 0) event_loop();
     JSValue g = JS_GetGlobalObject(ctx);
     JSValue p = JS_GetPropertyStr(ctx, g, "process");

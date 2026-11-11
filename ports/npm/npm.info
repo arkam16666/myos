@@ -1,0 +1,3 @@
+// npm for MyOS: install pure-JavaScript packages from registry.npmjs.org (built from ports/node + ports/npm/npm.js)
+// @version 1.0
+// @description npm: JavaScript packages for node
