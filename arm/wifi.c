@@ -1651,6 +1651,13 @@ static void boot_thread(void) {
                 busy_pid = -1;
                 uint64_t end = millis() + 30000;
                 while (millis() < end && !join_failed && state != ST_ONLINE) console_poll();
+                if (state == ST_ONLINE) {                       // tell the serial terminal
+                    console_puts(console_at_line_start() ? "" : "\n");
+                    console_puts("Wi-Fi: connected to ");
+                    console_puts(join_ssid);
+                    console_puts(", ");
+                    print_ip_line();
+                }
             } else if (best < 0) {
                 set_message("no saved network nearby");
             }
