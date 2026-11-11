@@ -16,3 +16,6 @@ arm/usbboot/*
 !arm/usbboot/config.txt
 arm/backup/
 __pycache__/
+
+# Claude Code worktrees of parallel sessions
+.claude/worktrees/

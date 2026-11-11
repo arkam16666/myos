@@ -3,90 +3,78 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 MyOS is a hobby/educational operating system written from scratch, with two editions:
-- **x86-64 (MyOS PC)**: assembly kernel (`boot.asm`, `kernel.asm`), runs in QEMU only.
-- **ARM64 (MyOS Pi)**: C kernel in `arm/`, runs on the owner's Raspberry Pi Zero 2 W (and QEMU raspi3b/raspi4b). Current work is focused here; x86 is on hold (see `PLAN.md`).
+- **ARM64 (MyOS Pi)**: C kernel in `arm/`, runs on the owner's Raspberry Pi Zero 2 W (and QEMU raspi3b/raspi4b). All current work is here.
+- **x86-64 (MyOS PC)**: assembly kernel (`boot.asm`, `kernel.asm`), QEMU only. On hold: don't build, test or extend it unless asked (the owner develops for ARM only).
 
-The owner communicates in Thai. `README.md` (Thai) is the user guide; `PLAN.md` (Thai) is the roadmap with checkboxes; tick them off as items are completed.
+The owner communicates in Thai. `README.md` (Thai) is the user guide; `PLAN.md` (Thai) is the roadmap with checkboxes (sections 4.6 apps, 4.7 Wi-Fi, 4.8 Linux programs); tick items off as they are completed.
 
-## Commands (Windows, PowerShell)
+## Commands
 
-```powershell
-.\build.ps1 -NoRun                 # x86: NASM -> build\, disk.img
-arm\build.ps1 -NoRun               # ARM: kernel8.img (USB/network build), kernel8-qemu.img (NO_USB),
-                                   #      build\myos8.img (padded 1 MB), build\packages\*.pkg (C packages,
-                                   #      ports like lua, MicroPython python.pkg)
-arm\build.ps1 -NoRun -Pi4          # Pi 4 variant
-powershell -ExecutionPolicy Bypass -File tests\run.ps1     # build everything + all QEMU tests
-tools\get-deps.ps1                 # fetch pinned third_party\ sources (not in git)
+The scripts are PowerShell and run on Windows (`powershell`) and macOS (`pwsh`; needs `brew install qemu llvm lld powershell`, the build picks Homebrew's LLVM because Apple's clang can't link bare-metal ARM).
+
+```sh
+pwsh tools/get-deps.ps1            # fetch pinned third_party/ (git commits / URLs + SHA-256; not in git):
+                                   #   MicroPython, TinyUSB, broadcom-peripherals, lwIP, Monocypher, Lua,
+                                   #   QuickJS, SQLite, BusyBox (static aarch64), Wi-Fi firmware
+pwsh arm/build.ps1 -NoRun          # kernel8.img (USB/network build), kernel8-qemu.img (NO_USB), myos8.img
+                                   # (padded 1 MB), build/packages/*.pkg (C packages, ports, python.pkg, busybox.pkg)
+pwsh arm/build.ps1 -NoRun -Pi4     # Pi 4 variant (overwrites the same output names)
 ```
 
-Single test suites (run from the repo root; set `$env:PYTHONIOENCODING='utf-8'` or output with the Thai path crashes):
-- `python tests\qemu_x86.py` – x86 (reads VGA memory via the QEMU monitor)
-- `python tests\qemu_arm.py` – ARM shell, SD/MyFS, programs, pkg, Python, update protocol, panic
-- `python tests\qemu_apps.py [APP ...]` – every `apps/py` app driven with scripted keys
-- `python tests\qemu_langs.py [LANG ...]` – lua, basic, scheme, forth
-- `python tests\qemu_multi.py` – multitasking (`&`, ps, kill, fg, Ctrl+C, memory isolation)
-<<<<<<< HEAD
-- `python tests\qemu_linux.py` – Linux programs: ELF loader + syscalls (`tests/linux/lxtest.c`), BusyBox applets, sh, vi, signals, /proc (needs `tools\get-deps.ps1` for BusyBox)
-=======
-- `python tests\qemu_fs.py [A B C D E]` – MyFS v2: folders/shell commands, 500 files, reclaim, v1 → v2 upgrade (kernel and PC), fragmented files, lost-space repair at mount
->>>>>>> main
+`qemu_arm.py` also boots `arm/build/kernel8-qemu-pi4.img`, which only exists if you build `-Pi4` first, copy `kernel8-qemu.img` to `kernel8-qemu-pi4.img`, then build again without `-Pi4` (that's what `tests/run.ps1` does; `run.ps1` also runs the x86 suite, so on macOS run the ARM suites one by one).
 
-QEMU builds have no USB, so networking/SSH/telnet can only be tested on the real Pi.
+Test suites (from the repo root; set `PYTHONIOENCODING=utf-8`, the Thai path on Windows crashes output otherwise):
+- `python tests/qemu_arm.py` – shell, SD/MyFS, programs, pkg/apt, Python, update protocol, panic, Pi 3B + Pi 4B
+- `python tests/qemu_apps.py [APP ...]` – every `apps/py` app driven with scripted keys
+- `python tests/qemu_langs.py [LANG ...]` – lua, basic, scheme, forth, node, sqlite3, chess
+- `python tests/qemu_multi.py` – multitasking (`&`, ps, kill, fg, Ctrl+C, memory isolation)
+- `python tests/qemu_fs.py [A B C D E]` – MyFS v2: folders, 500 files, reclaim, v1 → v2 upgrade, fragmentation, repair at mount
+- `python tests/qemu_linux.py` – Linux programs: ELF loader + syscalls (`tests/linux/lxtest.c`), BusyBox applets, sh, vi, signals, /proc
 
-Real Pi (plugged in by USB; it shows up as COM port VID 1209/PID 0001 plus a CDC-NCM network adapter):
-- `arm\update-pi.ps1 [-NoBuild]` – send a new kernel over the COM port (CRC-checked, written over `myos8.img` on the SD card, reboots)
-- `arm\push-pi.ps1 file...` / `-Packages` – send files
-- `python tools\repo.py` – serve the package repository on 192.168.7.2:8080 for `pkg update` / `pkg install` on the Pi
-- Pi = 192.168.7.1: `ssh myos@192.168.7.1` (password set on the Pi with `passwd`), telnet port 23
-- The COM port can only be opened by one program: PuTTY must be closed before update/push scripts.
+Each suite picks a free TCP port for QEMU's serial (override with `MYOS_TEST_PORT`), so suites can run in parallel, but with 4+ QEMUs at once timing-sensitive checks (boot banner, htop) can fail; rerun a failing suite alone before calling it a bug. QEMU builds have no USB: networking, SSH, telnet and Wi-Fi can only be tested on the real Pi.
+
+### Real Pi
+
+Plugged in by USB it is a serial port (USB ID 1209:0001; `COMn` on Windows, `/dev/cu.usbmodem*` on macOS) plus a CDC-NCM network adapter (Pi = 192.168.7.1, PC = 192.168.7.2).
+- Send a kernel (CRC-checked, written over `myos8.img` on the SD card, then reboot): `arm\update-pi.ps1 [-NoBuild]` on Windows, `python3 tools/pi.py update` on macOS/Linux.
+- Send files into MyFS: `arm\push-pi.ps1 file... | -Packages`, or `python3 tools/pi.py push FILE...`.
+- Run a shell command and read the answer: `python3 tools/pi.py run "CMD" [SECONDS]` (handy for checking things on the board).
+- `python tools/repo.py` serves the package repository on 192.168.7.2:8080 for `pkg update` / `pkg install`. It snapshots `arm/build/packages` and `apps/py` at startup: restart it after rebuilding.
+- `ssh myos@192.168.7.1` (password set on the Pi with `passwd`), telnet port 23 (USB only, no password).
+- Only one program can hold the serial port: close PuTTY/screen before update/push/run.
+- A kernel panic halts the Pi; pressing R on the serial terminal restarts it. A kernel that doesn't boot means pulling the SD card, so test in QEMU before flashing.
+- The Wi-Fi firmware files (`brcmfmac43436-sdio.bin/.txt/.clm_blob`, from `third_party/wifi-firmware/`) must be in MyFS.
 - Going back to Linux on the Pi: delete `config.txt` on the boot partition and rename `config.txt.linux-backup`.
 
 ## Environment gotchas
 
-- The project path contains Thai characters. `make` can't handle it, so MicroPython is built through the junction `%TEMP%\myos-src` (`arm\build.ps1` does this). Run make from PowerShell, not Git Bash (Bash resolves the junction back to the Thai path). Make also needs LLVM and Git's `usr\bin` on PATH.
+- On Windows the project path contains Thai characters, which `make` can't handle: `arm/build.ps1` builds MicroPython through the junction `%TEMP%\myos-src` (run make from PowerShell, not Git Bash, which resolves the junction back; LLVM and Git's `usr\bin` must be on PATH). On macOS/Linux it builds in place, or through a symlink if the path is non-ASCII.
 - In the Bash tool, heredocs turn `\\` into `\`, which breaks C/Python escapes like `'\n'`. Use the Write/Edit tools for content with backslashes.
-- Files are a mix of CRLF (git checkout) and LF (newly written). Scripted replacements must try both.
+- Files are a mix of CRLF (git checkout) and LF (newly written). Scripted replacements must try both and keep each file's line endings.
 - MicroPython lacks some CPython APIs (e.g. `str.isalnum`, `bytearray * int`, stepped slice assignment). Test apps with `qemu_apps.py`, not only CPython.
-- Commits: repo-local identity `arka <arka@localhost>`; end messages with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Commits: identity `arka <arka@localhost>` (pass it with `git -c user.name=arka -c user.email=arka@localhost commit`; there is no repo-local config); end messages with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## ARM kernel architecture (`arm/`)
 
-- **Boot/MMU**: broadcom-peripherals (`third_party/tinyusb/hw/mcu/broadcom`) supplies `boot8.s`, the flat MMU map (2 MB blocks), interrupts and mailbox. `kernel.c` `main()` initialises everything, then runs the serial shell (`shell_loop`, shared by all terminals).
-- **Exceptions** (`vectors.S`): trap frame of 288 bytes; `el0_sync` → `user_sync` (syscalls via `svc #0`, number in x8). Also contains `proc_switch` (kernel-thread context switch incl. DAIF), `fp_save`/`fp_restore`, `enter_user`. The kernel is compiled with `-mgeneral-regs-only`; FP/SIMD registers belong to programs and are saved on every switch.
-<<<<<<< HEAD
-- **Processes** (`proc.c`): up to 16 slots (slot 0 = serial shell). Every user process has its own L1/L2 tables mapping VA `0x400000` (2 MB code/data/stack, args at `0x5FFF00`) and heap VA `0x02000000–0x04000000` to blocks from a physical pool at `0x04000000–0x14000000`; heap blocks are mapped on first touch (data-abort handler) or by `proc_user_ensure` before a syscall touches user memory. Preemption only happens on timer IRQs taken from EL0 (`proc_irq_return`); kernel code switches only at `proc_yield()`, which `console_poll()` calls. That's why kernel code needs no locks as long as it doesn't yield mid-operation. Shells for network sessions are kernel threads (`proc_spawn_kernel`). TPIDR_EL0 is saved per process (`proc->tpidr`).
-- **Linux programs** (`linux.c`): a MyFS file starting with `\x7fELF` (static AArch64, ET_EXEC or static PIE; PT_INTERP is refused) runs as a Linux process (`proc->linux`): its `svc #0` calls use Linux numbers/structs (unknown → -ENOSYS; `strace PROG` traces). Address space: VA `0x400000–0x4000000` (all 30 low-L2 entries, not just the MYEX block) for ELF segments + brk, and L1[1] → a per-process L2 table for VA `0x40000000–0x80000000` (mmap top-down below an 8 MB stack at the top). The process owns page-granular ranges (VMA list); 2 MB pool blocks are mapped on first touch (`linux_fault`) or by `uok()` before the kernel touches user memory. fork copies every block; execve/exit free them. Files: MyFS paths via `myfs_normalize(proc->cwd, ...)` (`/bin/X` etc. that don't exist fall back to `/X`, then `/busybox` if X is an applet; `/tmp` is created on first use), the last exec'd file is cached in pool blocks (`ecache`, validated by size + sampled bytes), files opened for writing live in pool blocks until the last close; pipes, `/dev/*`, a synthesized `/proc`. Signals: real handlers via an rt_sigframe on the user stack, delivered on syscall return and on IRQ return from EL0 (`linux_irq_return` in `vectors.S`); Ctrl+C → SIGINT to the tty's foreground job (`linux_interrupt`). Waiting syscalls return -EINTR when a handled signal is pending. Forked children have `proc->parent` set and are reaped by `wait4`, not by the MyOS shell.
-=======
-- **Processes** (`proc.c`): up to 16 slots (slot 0 = serial shell). Every user process has its own L1/L2 tables mapping VA `0x400000` (2 MB code/data/stack, args at `0x5FFF00`) and heap VA `0x02000000–0x04000000` to blocks from a physical pool from `0x04000000` up to the end of ARM RAM reported by the firmware mailbox at boot (capped at `0x3F000000`, fallback `0x14000000`; QEMU raspi3b gives 896 MB, a Pi Zero 2 W ~384 MB); heap blocks are mapped on first touch (data-abort handler) or by `proc_user_ensure` before a syscall touches user memory. Preemption only happens on timer IRQs taken from EL0 (`proc_irq_return`); kernel code switches only at `proc_yield()`, which `console_poll()` calls. That's why kernel code needs no locks as long as it doesn't yield mid-operation. Shells for network sessions are kernel threads (`proc_spawn_kernel`).
->>>>>>> main
+- **Boot/MMU**: broadcom-peripherals (`third_party/tinyusb/hw/mcu/broadcom`) supplies `boot8.s`, the flat MMU map (2 MB blocks; normal RAM below `0x3F000000`), interrupts and mailbox. `kernel.c` `main()` initialises everything, then runs the serial shell (`shell_loop`, shared by all terminals). Fixed kernel buffers: `0x01000000` (16 MB) receives updates/files and packages being installed.
+- **Exceptions** (`vectors.S`): trap frame of 288 bytes; `el0_sync` → `user_sync` (syscalls via `svc #0`, number in x8). Also contains `proc_switch` (kernel-thread context switch incl. DAIF), `fp_save`/`fp_restore`, `enter_user`, `user_resume`. The kernel is compiled with `-mgeneral-regs-only`; FP/SIMD registers belong to programs and are saved on every switch.
+- **Processes** (`proc.c`): up to 16 slots (slot 0 = serial shell). Every user process has its own L1/L2 tables mapping VA `0x400000` (2 MB code/data/stack, args at `0x5FFF00`; program files ≤ `USER_MAX_SIZE` 1 MB) and heap VA `0x02000000–0x04000000` to 2 MB blocks from a physical pool that runs from `0x04000000` to the end of ARM RAM reported by the firmware mailbox at boot (capped at `0x3F000000`, fallback `0x14000000`; QEMU 896 MB, Pi Zero 2 W 384 MB). Heap blocks are mapped on first touch (data-abort handler) or by `proc_user_ensure` before a syscall touches user memory. Preemption only happens on timer IRQs taken from EL0 (`proc_irq_return`); kernel code switches only at `proc_yield()`, which `console_poll()` calls. That's why kernel code needs no locks as long as it doesn't yield mid-operation. Shells for network sessions and the Wi-Fi auto-connect are kernel threads (`proc_spawn_kernel`). TPIDR_EL0 is saved per process (`proc->tpidr`).
+- **Linux programs** (`linux.c`): a file starting with `\x7fELF` (static AArch64, ET_EXEC or static PIE; PT_INTERP is refused) runs as a Linux process (`proc->linux`) whose `svc #0` calls use Linux numbers/structs (unknown → -ENOSYS; `strace PROG` traces). Address space: VA `0x400000–0x4000000` for ELF segments + brk, and a per-process L2 table for `0x40000000–0x80000000` (mmap top-down below an 8 MB stack). Page-granular VMAs over 2 MB pool blocks mapped on first touch (`linux_fault`) or by `uok()`; fork copies every block. Paths go through `myfs_normalize(proc->cwd, ...)`; missing `/bin/X` falls back to `/X`, then `/busybox` if X is an applet. Pipes, `/dev/*` and a synthesized `/proc`. Signals use a real rt_sigframe, delivered on syscall return and IRQ return from EL0 (`linux_irq_return`); Ctrl+C sends SIGINT to the tty's foreground job. Forked children (`proc->parent`) are reaped by `wait4`, not the shell. The shell runs a non-builtin command as a BusyBox applet when `busybox` is installed (builtins like `ls`, `cat`, `ps`, `df` need a `busybox` prefix). No dynamic linking, threads or sockets yet (PLAN 4.8).
 - **Terminals** (`console.c`): tty 0 = GPIO UART + USB CDC serial, tty 1 = telnet (`remote.c`), tty 2–4 = SSH sessions. Each tty has its own key queue and output device; a process writes to and reads from `proc->tty`. Only the tty's foreground process gets keys; Ctrl+C is intercepted in the key pump (`proc_interrupt`). Opening/closing a network session spawns/kills its shell and programs (`check_terminals`).
-- **Syscalls** (`user.c`): numbering must match `csdk/myos.h` (and `apps/myos.inc` for x86). File-name arguments are paths relative to the process cwd; folder calls are 32-38 (mkdir, rmdir, rename, stat, readdir, chdir, getcwd) and return negative MyFS errors (`MYOS_E*`). Waiting syscalls set `proc->waiting` so htop counts them as idle. System-info structs are shared in `csdk/myos_info.h`.
-- **Storage**: `sd.c` (EMMC/SDHCI) → `fat.c` finds contiguous `myfs.img`/`myos8.img` on the FAT boot partition → `myfs.c`, two formats (layouts documented at the top of `myfs.c` and `tools/myfs.py`, which must stay byte-compatible):
-  - v1 `MYFS0001`: flat, 64 files, 47-char names, never reclaims space. The x86 kernel only knows this one; `tools/myfs.py format` on a blank image still makes v1 for it.
-  - v2 `MYFS0002` (default for `format`, `myfs.py create`, `mksdimg.py`): 512-byte blocks, free-sector bitmap (kept wholly in RAM, 1 MB max = 4 GB volume), 128-byte entries (name[64], type, size, first extent block, 6 inline extents), extent blocks `MYXT` (63 extents each), folders = files of entries; `/`'s entry lives in the superblock. Writes are copy-on-write in the order data → extent blocks → bitmap → the single sector holding the entry (commit) → bitmap frees, so a crash leaks at worst. Mount walks the whole tree and rebuilds the bitmap (repairs leaks; on any damage it ORs with the disk bitmap instead of freeing). Metadata goes through a 256-sector write-through cache; `readdir` keeps 4 cursors so sequential index reads are O(1).
-  - API (`myfs.h`): every name is a path; relative = from `/` (the kernel API has no cwd). The shell/syscalls make paths absolute with `myfs_normalize(proc_cwd(), ...)`; `proc->cwd` is per process, inherited from the spawning shell. `myfs_entry` still lists files of `/` only (old callers); use `myfs_readdir` for folders. `myfs_upgrade` converts v1 → v2 in place without moving data (sector 0 written last). No locks: myfs never yields.
-- **Network** (USB only): TinyUSB CDC-NCM + lwIP (`net.c`, NO_SYS, polled; `net_lock` guards against re-entry from the TinyUSB send path), DHCP/DNS servers for the PC, telnet (`remote.c`), SSH-2 server (`ssh.c`: curve25519-sha256, ssh-ed25519, chacha20-poly1305, strict KEX, password auth, 3 sessions; Monocypher crypto, `sha256.c`, hardware RNG in `rng.c`), HTTP client for the repo (`http.c`).
-<<<<<<< HEAD
-<<<<<<< HEAD
-- **Packages** (`pkg.c`, `tools/mkpkg.py`, `tools/repo.py`): 128-byte "MYPK" header; kind 1 = native program ("MYEX" header: u32 arch 1=x86/2=ARM64, u64 entry, linked at 0x400000 by `csdk/link.ld`), kind 2 = Python app installed as `NAME.py` and run by typing `NAME`, kind 3 = Linux ELF program (index kind "linux"; BusyBox from `third_party/busybox` via `ports/busybox/busybox.info`). The repo index `pkg.idx` holds size and SHA-256 per package; `pkg.db` records installed versions. Python apps require python ≥ 1.3 (dependency check in `pkg.c`).
-=======
-=======
-- **Wi-Fi** (Pi Zero 2 W, USB build only for the network part): `sdio.c` drives the EMMC controller as an SDIO host (GPIO 34-39, WL_ON = GPIO 41, 25 MHz 4-bit); `wifi.c` loads firmware/NVRAM/CLM from MyFS into the CYW43436 (chip ID 0xA9A6), talks SDPCM/BCDC (ioctls, events, data), and adds a second lwIP netif with DHCP. Polled from `net_poll()`. Only clear host bits (0xF0) in the SDIO core's intstatus, or the chip misses its own frame interrupts. `wifi log` prints the firmware's console. Telnet and the USB DHCP/DNS servers stay bound to the USB netif.
->>>>>>> main
-- **Packages** (`pkg.c`, `tools/mkpkg.py`, `tools/repo.py`): 128-byte "MYPK" header; kind 1 = native program ("MYEX" header: u32 arch 1=x86/2=ARM64, u64 entry, linked at 0x400000 by `csdk/link.ld`), kind 2 = Python app installed as `NAME.py` and run by typing `NAME`. The repo index `pkg.idx` holds size and SHA-256 per package; `pkg.db` records installed versions. Python apps require python ≥ 1.3 (dependency check in `pkg.c`). Programs given by bare name are looked up in `/` first, then the cwd; pkg's Python apps are run as `python /NAME.py` when the cwd isn't `/`.
->>>>>>> main
+- **Syscalls** (`user.c`): numbering must match `csdk/myos.h` (and `apps/myos.inc` for x86). File-name arguments are paths relative to the process cwd; folder calls are 32–38 (mkdir, rmdir, rename, stat, readdir, chdir, getcwd) and return negative `MYOS_E*` errors; `SYS_WIFI` is 48. Waiting syscalls set `proc->waiting` so htop counts them as idle. System-info structs are shared in `csdk/myos_info.h`.
+- **Storage**: `sd.c` tries the SDHOST controller first (`sdhost.c`, GPIO 48–53 ALT0, like Linux) and falls back to EMMC/SDHCI (ALT3); SDHOST keeps EMMC free for Wi-Fi, and `sd` shows which one is in use. If SD breaks, the USB `update` command breaks too. `fat.c` finds the contiguous `myfs.img`/`myos8.img` on the FAT boot partition → `myfs.c`, two formats (layouts at the top of `myfs.c` and `tools/myfs.py`, which must stay byte-compatible):
+  - v1 `MYFS0001`: flat, 64 files, 47-char names, never reclaims space. The x86 kernel only knows this one; `tools/myfs.py format` on a blank image still makes v1. The owner's Pi is still v1 until they run `fsupgrade`.
+  - v2 `MYFS0002` (default for `format`, `myfs.py create`, `mksdimg.py`): 512-byte blocks, free-sector bitmap kept in RAM (4 GB max), 128-byte entries (63-char names, 6 inline extents, `MYXT` extent blocks), folders are files of entries; `/`'s entry lives in the superblock. Copy-on-write order data → extents → bitmap → the entry's sector (commit) → frees, so a crash leaks at worst; mount walks the tree and rebuilds the bitmap. `myfs_upgrade` converts v1 → v2 in place (sector 0 written last).
+  - API (`myfs.h`): every name is a path; relative = from `/` (the kernel API has no cwd; callers use `myfs_normalize(proc_cwd(), ...)`). `myfs_entry` lists `/` only (old callers); use `myfs_readdir`/`myfs_stat` for folders. myfs never yields, so it needs no locks.
+- **Network** (USB build only): TinyUSB CDC-NCM + lwIP (`net.c`, NO_SYS, polled; `net_lock` guards against re-entry from the TinyUSB send path), DHCP/DNS servers for the PC, telnet (`remote.c`), SSH-2 server (`ssh.c`: curve25519-sha256, ssh-ed25519, chacha20-poly1305, strict KEX, password auth, 3 sessions; Monocypher, `sha256.c`, hardware RNG `rng.c`), HTTP client for the repo (`http.c`), `ping`.
+- **Wi-Fi** (Pi Zero 2 W): `sdio.c` drives EMMC as an SDIO host (GPIO 34–39, WL_ON = GPIO 41, 25 MHz 4-bit; 50 MHz gives CRC errors); `wifi.c` loads firmware/NVRAM/CLM from MyFS into the CYW43436, talks SDPCM/BCDC (ioctls, events, data; WPA2 via the firmware's supplicant) and adds a second lwIP netif with DHCP, polled from `net_poll()`. Only clear the host bits (`& 0xF0`) in the SDIO core's intstatus, or the firmware ignores commands. Saved networks are in `wifi.cfg` (plain text); `wifi log` prints the firmware console. Telnet and the USB DHCP/DNS servers stay bound to the USB netif. Verified on hardware: bring-up, scan, auth/association; DHCP and the data path have not yet run on a real network. QEMU and Pi 4 builds report no Wi-Fi.
+- **Packages** (`pkg.c`, `tools/mkpkg.py`, `tools/repo.py`): 128-byte "MYPK" header; kind 1 = native program ("MYEX" header: u32 arch 1=x86/2=ARM64, u64 entry, linked at 0x400000 by `csdk/link.ld`), kind 2 = Python app installed as `NAME.py` and run by typing `NAME` (needs python ≥ 1.3), kind 3 = Linux ELF (BusyBox via `ports/busybox/busybox.info`). The repo index `pkg.idx` holds size and SHA-256 per package; `pkg.db` records installed versions. `apt`/`apt-get` map onto `pkg` (drop `-y`, `show` → info, `purge` → remove); `pkg_alias` maps `nodejs`/`qjs`/... → `node`. Bare program names are looked up in `/` first, then the cwd.
 
 ## User space
 
-- `csdk/`: `crt0.c`, minimal `libc.c`, and with `-DMYOS_LIBC` a full C library (`csdk/include`, `csdk/libc`: stdio on MyFS with whole files kept in memory, malloc over both heap regions, printf with floats, strtod, setjmp, time, folders via `dirent.h`/`sys/stat.h`/`unistd.h` in `libc/dir.c`, math from MicroPython's libm). There is no 128-bit `long double` runtime, so avoid `long double`.
-- `packages/*.c`: small C programs built for both architectures.
-<<<<<<< HEAD
-- `ports/NAME/NAME.info` + `$ports` in `arm\build.ps1`: unmodified third-party C programs (Lua 5.4) built against the full libc. Prebuilt static Linux binaries (BusyBox) are downloaded with a pinned SHA-256 by `tools\get-deps.ps1` and packaged as kind 3.
+- `csdk/`: `crt0.c`, minimal `libc.c`, and with `-DMYOS_LIBC` a full C library (`csdk/include`, `csdk/libc`: stdio on MyFS with whole files kept in memory, malloc over both heap regions, printf with floats, strtod, setjmp, time/`clock_gettime`, folders via `dirent.h`/`sys/stat.h`/`unistd.h`, 128-bit integer division in `int128.c`, math from MicroPython's libm). There is no 128-bit `long double` runtime, so avoid `long double`.
+- `packages/*.c`: small C programs (calc, chess, ...) built for both architectures.
+- `ports/NAME/NAME.info` + `$ports` in `arm/build.ps1`: unmodified third-party C programs built against the full libc, with per-port flags in the `$ports` entry: Lua 5.4, QuickJS as `node` (own Node-like front end in `ports/node/`, `-Os` to stay under 1 MB, runs on a 3 MB stack taken from the heap), SQLite as `sqlite3` (own shell and a MyFS VFS: the database is held in memory and written back on commit).
 - `tests/linux/*.c`: raw-syscall Linux test programs (`clang --target=aarch64-linux-gnu -nostdlib -static`) → `arm/build/linux/`.
-- `python/`: MicroPython port (`make ARCH=arm64` → `build-arm64`); `modmyos.c` is the `myos` module (`key`, `getkey`, `clear`, `move`, `cursor`, `ticks`, `procs`, `sysinfo`, `kill`); `file.c` provides `open`/`os`. Bump `python/python.info` version when the port changes so `pkg upgrade` picks it up.
-=======
-- `ports/NAME/NAME.info` + `$ports` in `arm\build.ps1`: unmodified third-party C programs (Lua 5.4) built against the full libc.
-- `python/`: MicroPython port (`make ARCH=arm64` → `build-arm64`); `modmyos.c` is the `myos` module (`key`, `getkey`, `clear`, `move`, `cursor`, `ticks`, `procs`, `sysinfo`, `kill`); `file.c` provides `open`/`os` (`listdir(path)`, `remove`, `mkdir`, `rmdir`, `rename`, `stat`, `chdir`, `getcwd`). Bump `python/python.info` version when the port changes so `pkg upgrade` picks it up.
->>>>>>> main
-- `apps/py/*.py`: Python apps; metadata from `# @version` / `# @description` (≤ 43 ASCII chars) comment lines. New apps also need an entry in `tests/qemu_apps.py`.
+- `python/`: MicroPython port (`make ARCH=arm64` → `build-arm64`); `modmyos.c` is the `myos` module (`key`, `getkey`, `clear`, `move`, `cursor`, `ticks`, `procs`, `sysinfo`, `kill`, `wifi_*`); `file.c` provides `open`/`os` (`listdir(path)`, `remove`, `mkdir`, `rmdir`, `rename`, `stat`, `chdir`, `getcwd`). Bump `python/python.info` version when the port changes so `pkg upgrade` picks it up.
+- `apps/py/*.py`: Python apps (incl. `htop`, `wifiman`); metadata from `# @version` / `# @description` (≤ 43 ASCII chars) comment lines. New apps also need an entry in `tests/qemu_apps.py`.
