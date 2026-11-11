@@ -346,7 +346,7 @@ static CallSite *link_concat(Class *c, uint16_t *bsm, const char *desc) {
                 Object *s = new_string_utf8(lit);
                 if (!s) return NULL;
                 Piece *p = &cs->pieces[cs->n++];
-                p->type = 'S';
+                p->type = '"';     /* a literal piece */
                 p->lit = intern_string(s);
                 ll = 0;
             }
@@ -368,7 +368,7 @@ static CallSite *link_concat(Class *c, uint16_t *bsm, const char *desc) {
                 }
                 if (s) {
                     Piece *p = &cs->pieces[cs->n++];
-                    p->type = 'S';
+                    p->type = '"';
                     p->lit = intern_string(s);
                 }
             } else if (*r != 1 && *r != 2) lit[ll++] = *r;
@@ -1055,7 +1055,7 @@ reload:
                     for (int i = 0; i < cs->n; i++) {
                         Piece *p = &cs->pieces[i];
                         Object *v;
-                        if (p->type == 'S') v = p->lit;
+                        if (p->type == '"') v = p->lit;
                         else if (p->type == 'L') v = args[p->off].l;
                         else if (!(v = prim_string(p->type, args[p->off]))) THROW();
                         ADATA(arr, Object *)[i] = v;
