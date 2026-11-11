@@ -173,6 +173,8 @@
 - [x] **4.6.4** แอป Python: `bc`, `neofetch`, `cal`, `sl`, `sudoku`, `sokoban`, `invaders`
 - [x] **4.6.5** C library เพิ่ม: `inttypes.h`, `sys/time.h`, `fenv.h`, `clock_gettime`, `alloca`, หาร 128 บิต
 - [ ] **4.6.6** ภาษาเพิ่ม: Tcl (Jim Tcl), Scheme ตัว C, ...
+- [x] **4.6.12** Java: JVM เขียนเอง (`ports/java`): interpreter ครบทุก bytecode, GC mark-sweep, invokedynamic (string concat, lambda, record, pattern switch), ไลบรารีเขียนเอง (`java.lang`, `java.util` + stream + regex, `java.math`, `java.io` บน MyFS) รัน `.class`/`.jar` จาก javac 8-25 (`pkg install java`, `java Hello`, `java -jar app.jar`)
+  - ต่อไป: javac บน Pi (ต้องมีคอมไพเลอร์ Java เขียนเอง), thread แบบสลับกันรัน, `java.time`, reflection, JIT
 - [ ] **4.6.7** C compiler บน Pi (TinyCC มี backend ARM64) ให้เขียน C แล้วคอมไพล์บน MyOS ได้
 - [ ] **4.6.8** วันที่จริง: เอาเวลาจากคอมผ่าน USB network (HTTP `Date` / NTP) ให้ `cal`, `date`, `Date()` ถูก
 - [x] **4.6.9** pkg จากอินเทอร์เน็ต: DNS (lwIP), HTTPS (TLS 1.3 เขียนเอง: X25519 + ChaCha20-Poly1305), คลังแอปบน GitHub (branch packages) เซ็นด้วย Ed25519

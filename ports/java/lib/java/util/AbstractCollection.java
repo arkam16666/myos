@@ -1,0 +1,100 @@
+package java.util;
+
+public abstract class AbstractCollection<E> implements Collection<E> {
+    protected AbstractCollection() {}
+
+    public abstract Iterator<E> iterator();
+
+    public abstract int size();
+
+    public boolean isEmpty() { return size() == 0; }
+
+    public boolean contains(Object o) {
+        for (Iterator<E> it = iterator(); it.hasNext();) if (Objects.equals(o, it.next())) return true;
+        return false;
+    }
+
+    public Object[] toArray() {
+        Object[] r = new Object[size()];
+        int i = 0;
+        for (Iterator<E> it = iterator(); it.hasNext() && i < r.length;) r[i++] = it.next();
+        return i == r.length ? r : Arrays.copyOf(r, i);
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T> T[] toArray(T[] a) {
+        int n = size();
+        T[] r = a.length >= n ? a : (T[]) java.lang.reflect.Array.newInstance(a.getClass().getComponentType(), n);
+        int i = 0;
+        for (Iterator<E> it = iterator(); it.hasNext() && i < n;) r[i++] = (T) it.next();
+        if (r.length > n) r[n] = null;
+        return r;
+    }
+
+    public boolean add(E e) { throw new UnsupportedOperationException(); }
+
+    public boolean remove(Object o) {
+        for (Iterator<E> it = iterator(); it.hasNext();) {
+            if (Objects.equals(o, it.next())) {
+                it.remove();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean containsAll(Collection<?> c) {
+        for (Object e : c) if (!contains(e)) return false;
+        return true;
+    }
+
+    public boolean addAll(Collection<? extends E> c) {
+        boolean modified = false;
+        for (E e : c) if (add(e)) modified = true;
+        return modified;
+    }
+
+    public boolean removeAll(Collection<?> c) {
+        Objects.requireNonNull(c);
+        boolean modified = false;
+        for (Iterator<?> it = iterator(); it.hasNext();) {
+            if (c.contains(it.next())) {
+                it.remove();
+                modified = true;
+            }
+        }
+        return modified;
+    }
+
+    public boolean retainAll(Collection<?> c) {
+        Objects.requireNonNull(c);
+        boolean modified = false;
+        for (Iterator<E> it = iterator(); it.hasNext();) {
+            if (!c.contains(it.next())) {
+                it.remove();
+                modified = true;
+            }
+        }
+        return modified;
+    }
+
+    public void clear() {
+        for (Iterator<E> it = iterator(); it.hasNext();) {
+            it.next();
+            it.remove();
+        }
+    }
+
+    public String toString() {
+        Iterator<E> it = iterator();
+        if (!it.hasNext()) return "[]";
+        StringBuilder sb = new StringBuilder();
+        sb.append('[');
+        for (;;) {
+            E e = it.next();
+            sb.append(e == this ? "(this Collection)" : e);
+            if (!it.hasNext()) return sb.append(']').toString();
+            sb.append(',').append(' ');
+        }
+    }
+}

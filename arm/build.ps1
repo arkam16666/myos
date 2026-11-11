@@ -120,10 +120,16 @@ $ports = @{
     'sqlite3' = { if (Test-Path ../third_party/sqlite/sqlite3.c) {
               @('-Os', '-include', '../ports/sqlite3/config.h', '-I../third_party/sqlite',
                 '../ports/sqlite3/cli.c', '../third_party/sqlite/sqlite3.c') } }
+    # Java: our own JVM (ports\java) + its runtime library (ports\java\lib, compiled with javac by mkrt.py)
+    'java' = { python ../ports/java/mkrt.py build/java/rt_jar.h | ForEach-Object { Write-Host "  $_" }
+              if ($LASTEXITCODE -eq 3) { Write-Host '  skipping java (no javac found: install a JDK to build it)'; return $false }
+              if ($LASTEXITCODE) { throw 'java runtime library failed' }
+              @('-fwrapv', '-Ibuild/java') + (@('main', 'class', 'interp', 'gc', 'native', 'util') |
+                ForEach-Object { "../ports/java/$_.c" }) }
 }
 foreach ($name in $ports.Keys) {
     $src = & $ports[$name]
-    if (-not $src) { Write-Host "  skipping $name (source missing: run tools\get-deps.ps1)"; continue }
+    if (-not $src) { if ($src -ne $false) { Write-Host "  skipping $name (source missing: run tools\get-deps.ps1)" }; continue }
     $ErrorActionPreference = 'Continue'
     & $clang @portflags "-DMYOS_PROGNAME=$name" @libc @src -o "build/ports/$name" 2>&1 |
         ForEach-Object { "$_" } | Where-Object { $_ -match 'error' } | ForEach-Object { Write-Host "  $_" }
