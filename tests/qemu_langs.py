@@ -1,6 +1,8 @@
 """Test the programming-language packages (and sqlite3, chess) in QEMU (Raspberry Pi 3B).
 
 Installs each language from its package and runs small programs in it.
+java: ports/java/tests/*.java are compiled with the PC's javac and put on the
+card; the expected output comes from the PC's java (or is written below).
 
 usage: python tests/qemu_langs.py [LANG ...]
 """
@@ -118,11 +120,82 @@ TESTS = {
         ("sqlite3 shop.db .dump", [], ["CREATE TABLE fruit", "INSERT INTO \"fruit\" VALUES(1,'apple',1.5);",
                                        "CREATE TABLE \"copy\"", "COMMIT;"]),
     ],
+    "java": [],                     # filled in by prepare_java()
     "chess": [
         ("chess plain", ["e2e4", "moves", "e2e4", "level 1", "undo", "quit"],
          ["MyOS Chess", "I play", "a2a3", "not a legal move", "Level 1"]),
     ],
 }
+
+
+# java: (command, javac --release 8?, typed lines, expected text or None = what the PC's java prints)
+JAVA_TESTS = [
+    ("java Hello one two", True, [], None),
+    ("java Hello.class exit", True, [], ["exiting with 3", "Program exited with code 3"]),
+    ("java -cp . Numbers", True, [], None),
+    ("java Strings", False, [], None),
+    ("java Collect", False, [], None),
+    ("java Exceptions", True, [], None),
+    ("java Shapes", True, [], None),
+    ("java Enums", True, [], None),
+    ("java GcStress", True, [], None),
+    ("java ScanTest", True, ["Arka Mai", "3 4", "2.5", "the quick  brown fox"],
+     ["Hello Arka Mai, 3 + 4 = 7, half of 2.5 is 1.25", "1: the", "4: fox", "bye"]),
+    ("java Classic", True, [], None),
+    ("java Modern", False, [], None),
+    ("java -jar app.jar MyOS", True, [], ["Hello MyOS from a jar!", "main class app.Main in package app"]),
+    ("java Unsupported", True, [], ["before", "java.lang.NoClassDefFoundError: java.awt.Point",
+                                    "at Unsupported.main(Unsupported.java:5)", "Program exited with code 1"]),
+    ("java Missing", True, [], ["Error: Could not find or load main class Missing"]),
+]
+
+
+def prepare_java(tmp):
+    """compile the Java tests on the PC; returns the files to put on the card"""
+    sys.path.insert(0, os.path.join(ROOT, "ports", "java"))
+    import mkrt  # noqa: E402
+    javac = mkrt.find_javac()
+    if not javac:
+        print("SKIP  java: no javac on this PC")
+        return []
+    java = os.path.join(os.path.dirname(javac), "java.exe" if os.name == "nt" else "java")
+    src = os.path.join(ROOT, "ports", "java", "tests")
+    out = {}
+    release8 = {f: True for f in os.listdir(src) if f.endswith(".java")}
+    for cmd, r8, _, _ in JAVA_TESTS:
+        for w in cmd.split():
+            if w.replace(".class", "") + ".java" in release8:
+                release8[w.replace(".class", "") + ".java"] = r8
+    for r8 in (True, False):
+        d = out[r8] = os.path.join(tmp, "java8" if r8 else "javanew")
+        os.makedirs(d)
+        srcs = [os.path.join(src, f) for f, v in release8.items() if v == r8]
+        if r8:
+            srcs += [os.path.join(src, "app", "Main.java"), os.path.join(src, "app", "util", "Greeter.java")]
+        flags = ["--release", "8"] if r8 else []
+        subprocess.run([javac, "-nowarn", "-Xlint:-options", "-encoding", "UTF-8"] + flags + ["-d", d] + srcs,
+                       check=True, capture_output=True)
+    files = [os.path.join(d, f) for d in out.values() for f in os.listdir(d) if f.endswith(".class")]
+    for cmd, r8, typed, expect in JAVA_TESTS:
+        words = cmd.split()[1:]
+        while words and words[0].startswith("-"):
+            words = words[2:] if words[0] in ("-cp", "-jar") else words[1:]
+        d = out[r8]
+        if expect is None:              # what the real JVM prints
+            r = subprocess.run([java, "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", d] + words,
+                               capture_output=True, text=True, encoding="utf-8", input="\n".join(typed) + "\n")
+            expect = [line.rstrip().replace("java.base/", "") for line in (r.stdout + r.stderr).splitlines()
+                      if line.strip()]
+        TESTS["java"].append((cmd, typed, expect, b"?"))
+    # app.jar: a package in a jar with a Main-Class
+    import zipfile
+    jar = os.path.join(tmp, "app.jar")
+    with zipfile.ZipFile(jar, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nMain-Class: app.Main\r\n\r\n")
+        for sub in ("app/Main.class", "app/util/Greeter.class"):
+            z.write(os.path.join(out[True], *sub.split("/")), sub)
+    files.append(jar)
+    return sorted(set(files))
 
 
 def main():
@@ -142,6 +215,8 @@ def main():
             files.append(out)
             if os.path.join(ROOT, "arm", "build", "packages", "python.pkg") not in files:
                 files.append(os.path.join(ROOT, "arm", "build", "packages", "python.pkg"))
+    if "java" in langs:
+        files += prepare_java(tmp)
     card = os.path.join(tmp, "sd.img")
     image = "arm/build/kernel8-qemu.img"
     mksdimg.build(card, files, kernel=os.path.join(ROOT, image))

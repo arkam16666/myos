@@ -1,0 +1,3 @@
+// Java for MyOS: our own small JVM (ports/java, MIT) with its own runtime library (ports/java/lib)
+// @version 1.0
+// @description Java (runs .class/.jar files from javac)
