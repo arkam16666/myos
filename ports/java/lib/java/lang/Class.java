@@ -62,6 +62,19 @@ public final class Class<T> implements java.io.Serializable {
 
     public native T newInstance() throws InstantiationException, IllegalAccessException;
 
+    private native boolean hasNoArgConstructor0();
+
+    /* reflection is limited to constructors without arguments */
+    public java.lang.reflect.Constructor<T> getDeclaredConstructor(Class<?>... parameterTypes) throws NoSuchMethodException {
+        if (parameterTypes.length != 0 || !hasNoArgConstructor0())
+            throw new NoSuchMethodException(getName() + ".<init>(" + (parameterTypes.length == 0 ? "" : "...") + ")");
+        return new java.lang.reflect.Constructor<T>(this);
+    }
+
+    public java.lang.reflect.Constructor<T> getConstructor(Class<?>... parameterTypes) throws NoSuchMethodException {
+        return getDeclaredConstructor(parameterTypes);
+    }
+
     static native Class<?> getPrimitiveClass(String name);
 
     public boolean desiredAssertionStatus() { return false; }

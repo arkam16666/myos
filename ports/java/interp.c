@@ -336,11 +336,11 @@ static CallSite *link_concat(Class *c, uint16_t *bsm, const char *desc) {
     cs->arg_slots = off;
     cs->pieces = xcalloc(strlen(recipe) + na + 2, sizeof(Piece));
     int ai = 0, ci = 3;
-    char lit[1024];
+    char *lit = xmalloc(strlen(recipe) + 1);      /* literal text between arguments */
     size_t ll = 0;
     /* the recipe is modified UTF-8: \1 = argument, \2 = constant */
     for (const char *r = recipe;; r++) {
-        if (!*r || *r == 1 || *r == 2 || ll >= sizeof lit - 4) {
+        if (!*r || *r == 1 || *r == 2) {
             if (ll) {
                 lit[ll] = 0;
                 Object *s = new_string_utf8(lit);
@@ -376,6 +376,7 @@ static CallSite *link_concat(Class *c, uint16_t *bsm, const char *desc) {
         }
         lit[ll++] = *r;
     }
+    free(lit);
     if (!concat_helper) {
         Class *h = load_class("java/lang/StringConcatHelper");
         if (!h) return NULL;
@@ -411,6 +412,15 @@ static CallSite *link_lambda(Class *c, uint16_t *bsm, const char *name, const ch
     int nb = 0;
     if (alt && nargs >= 4) {
         int flags = c->cp[bsm[5]].i, at = 6;
+        if (flags & 1) {                /* serializable: also a java.io.Serializable */
+            Class *ser = load_class("java/io/Serializable");
+            if (ser) {
+                Class **ni = xcalloc(lc->n_ifaces + 2, sizeof(Class *));
+                memcpy(ni, lc->ifaces, lc->n_ifaces * sizeof(Class *));
+                ni[lc->n_ifaces++] = ser;
+                lc->ifaces = ni;
+            } else exception = NULL;
+        }
         if (flags & 2) {                /* marker interfaces */
             int cnt = c->cp[bsm[at]].i;
             at++;

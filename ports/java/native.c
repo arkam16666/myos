@@ -438,6 +438,10 @@ static void N_Class_newInstance(Slot *a, Slot *r) {
     if (run_method(m, &arg, 1)) return;
     r->l = o;
 }
+static void N_Class_hasNoArgConstructor0(Slot *a, Slot *r) {
+    Class *c = mirror_class(a[0].l);
+    r->i = !c->is_array && !c->prim && find_method(c, intern("<init>"), intern("()V")) != NULL;
+}
 static void N_Class_getPrimitiveClass(Slot *a, Slot *r) {
     char *n = string_utf8(a[0].l);
     static const char *names[] = { "int", "long", "boolean", "byte", "char", "short", "float", "double", "void" };
@@ -852,6 +856,7 @@ static const NativeDef natives[] = {
     { "java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;", N_Class_forName },
     { "java/lang/Class", "newInstance", "()Ljava/lang/Object;", N_Class_newInstance },
     { "java/lang/Class", "getPrimitiveClass", "(Ljava/lang/String;)Ljava/lang/Class;", N_Class_getPrimitiveClass },
+    { "java/lang/Class", "hasNoArgConstructor0", "()Z", N_Class_hasNoArgConstructor0 },
     { "java/lang/Throwable", "fillIn0", "()V", N_Throwable_fillIn0 },
     { "java/lang/Throwable", "buildStackTrace", "()[Ljava/lang/StackTraceElement;", N_Throwable_buildStackTrace },
     { "java/lang/Double", "doubleToRawLongBits", "(D)J", N_Double_doubleToRawLongBits },
