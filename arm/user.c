@@ -36,13 +36,18 @@ static uint64_t rd64(const uint8_t *p) { return rd32(p) | (uint64_t)rd32(p + 4) 
 void user_init(void) {
     uint64_t *e = &level_2_0x0_0000_0000_to_0x0_4000_0000[USER_BASE >> 21];
     *e = (*e | DESC_AP_EL0_RW | DESC_PXN) & ~DESC_UXN;
+    for (uint64_t a = USER_HEAP; a < USER_HEAP_END; a += 0x200000) {    // the heap: data only
+        e = &level_2_0x0_0000_0000_to_0x0_4000_0000[a >> 21];
+        *e |= DESC_AP_EL0_RW | DESC_PXN | DESC_UXN;
+    }
     __asm__ volatile ("dsb ishst; tlbi vmalle1; dsb ish; isb" ::: "memory");
     // let programs use floating point / SIMD
     __asm__ volatile ("msr cpacr_el1, %0; isb" :: "r"(3ull << 20));
 }
 
 static int user_range(uint64_t addr, uint64_t len) {
-    return addr >= USER_BASE && len <= USER_END - USER_BASE && addr + len <= USER_END;
+    if (addr >= USER_BASE && len <= USER_END - USER_BASE && addr + len <= USER_END) return 1;
+    return addr >= USER_HEAP && len <= USER_HEAP_END - USER_HEAP && addr + len <= USER_HEAP_END;
 }
 
 // copy a file name from program memory; 0 if it's not a sensible name
@@ -75,6 +80,7 @@ int run_program(const char *name, const char *args) {
     }
     uint8_t *base = (uint8_t *)USER_BASE;
     memset(base, 0, USER_END - USER_BASE);          // wipe the last program
+    memset((void *)USER_HEAP, 0, USER_HEAP_END - USER_HEAP);   // and its heap
     if (myfs_read(name, 0, base, (uint32_t)size) != size) {
         console_puts("Disk error!\n");
         return 0;

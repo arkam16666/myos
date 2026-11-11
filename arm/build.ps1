@@ -84,6 +84,35 @@ foreach ($p in Get-ChildItem ../packages -Filter *.c) {
 }
 $ErrorActionPreference = 'Stop'
 
+# Ported C programs (ports\NAME\NAME.info + source in third_party) built with
+# the full C library (csdk\libc: stdio, malloc, printf, math ...)
+New-Item -ItemType Directory -Force build/ports | Out-Null
+$libm = @('__cos', '__expo2', '__fpclassify', '__rem_pio2', '__rem_pio2_large', '__signbit', '__sin', '__tan',
+          'acos', 'acosh', 'asin', 'asinh', 'atan', 'atan2', 'atanh', 'ceil', 'cos', 'cosh', 'copysign', 'erf',
+          'exp', 'expm1', 'floor', 'fmod', 'frexp', 'ldexp', 'lgamma', 'log', 'log10', 'log1p', 'modf',
+          'nearbyint', 'pow', 'rint', 'round', 'scalbn', 'sin', 'sinh', 'sqrt', 'tan', 'tanh', 'tgamma', 'trunc') |
+        ForEach-Object { "../third_party/micropython/lib/libm_dbl/$_.c" }
+$libc = @('../csdk/crt0.c', '../csdk/libc.c', '../csdk/libc/setjmp.S') +
+        (Get-ChildItem ../csdk/libc -Filter *.c | ForEach-Object { "../csdk/libc/$($_.Name)" }) + $libm
+$portflags = @('--target=aarch64-unknown-none-elf', '-mcpu=cortex-a53', '-ffreestanding', '-nostdlib',
+               '-fno-pic', '-fno-pie', '-O2', '-w', '-I../csdk/include', '-I../csdk', '-DMYOS_LIBC',
+               '-fuse-ld=lld', '-Wl,-T,../csdk/link.ld', '-Wl,--defsym=MYOS_ARCH=2', '-Wl,--oformat=binary')
+$ports = @{
+    # Lua 5.4: everything in third_party\lua except the test library
+    'lua' = { Get-ChildItem ../third_party/lua -Filter 'l*.c' | Where-Object Name -ne 'ltests.c' |
+              ForEach-Object { "../third_party/lua/$($_.Name)" } }
+}
+foreach ($name in $ports.Keys) {
+    $src = & $ports[$name]
+    if (-not $src) { Write-Host "  skipping $name (source missing: run tools\get-deps.ps1)"; continue }
+    $ErrorActionPreference = 'Continue'
+    & $clang @portflags "-DMYOS_PROGNAME=$name" @libc @src -o "build/ports/$name" 2>&1 |
+        ForEach-Object { "$_" } | Where-Object { $_ -match 'error' } | ForEach-Object { Write-Host "  $_" }
+    $ErrorActionPreference = 'Stop'
+    if ($LASTEXITCODE) { throw "$name failed for ARM" }
+    python ../tools/mkpkg.py "build/ports/$name" "../ports/$name/$name.info" "build/packages/$name.pkg"
+}
+
 # MicroPython for the Pi (python\ built with ARCH=arm64) -> build\packages\python.pkg
 $make = Get-Command make -ErrorAction SilentlyContinue
 $make = if ($make) { $make.Source } else {

@@ -14,7 +14,9 @@ $deps = @(
     @{ Path = 'third_party/tinyusb/lib/lwip'; Url = 'https://github.com/lwip-tcpip/lwip.git'
        Commit = '159e31b689577dbf69cf0683bbaffbd71fa5ee10' },   # TCP/IP for the USB network
     @{ Path = 'third_party/monocypher'; Url = 'https://github.com/LoupVaillant/Monocypher.git'
-       Commit = '0d85f98c9d9b0227e42cf795cb527dff372b40a4' }    # cryptography for SSH (4.0.2)
+       Commit = '0d85f98c9d9b0227e42cf795cb527dff372b40a4' },   # cryptography for SSH (4.0.2)
+    @{ Path = 'third_party/lua'; Url = 'https://github.com/lua/lua.git'
+       Commit = '1ab3208a1fceb12fca8f24ba57d6e13c5bff15e3' }    # Lua 5.4.7 (package 'lua')
 )
 
 foreach ($d in $deps) {

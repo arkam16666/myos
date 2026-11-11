@@ -7,6 +7,8 @@
 #define USER_END      0x600000UL    // the one 2 MB block EL0 may touch
 #define USER_ARGS     0x5FFF00UL    // command line; the user stack starts below it
 #define USER_MAX_SIZE 0x100000UL    // largest program file
+#define USER_HEAP     0x02000000UL  // extra memory for programs (malloc): 32 MB,
+#define USER_HEAP_END 0x04000000UL  //   read/write but never executable
 #define MYEX_ARCH_X86   1           // program header: "MYEX", u32 arch, u64 entry
 #define MYEX_ARCH_ARM64 2
 

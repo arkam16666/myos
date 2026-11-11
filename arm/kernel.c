@@ -650,7 +650,7 @@ int main(void) {
     console_puts(banner);
     print_storage_status();
 
-    char line[80];
+    char line[250];                 // programs get at most 250 bytes of arguments
     for (;;) {
         console_puts(prompt);
         read_line(line, sizeof line);

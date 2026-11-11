@@ -4,11 +4,25 @@
  */
 #include "myos.h"
 
+#ifdef MYOS_LIBC
+/* programs using the full C library (csdk/libc) get main(argc, argv) */
+#ifndef MYOS_PROGNAME
+#define MYOS_PROGNAME program           /* -DMYOS_PROGNAME=lua (no quotes) */
+#endif
+#define MYOS_STR2(x) #x
+#define MYOS_STR(x) MYOS_STR2(x)
+int myos_libc_main(const char *args, const char *progname);
+
+__attribute__((used)) void myos_start(const char *args) {
+    myos_libc_main(args, MYOS_STR(MYOS_PROGNAME));
+}
+#else
 int main(const char *args);
 
 __attribute__((used)) void myos_start(const char *args) {
     sys_exit(main(args));
 }
+#endif
 
 #if defined(__aarch64__)
 __attribute__((section(".text.start"), naked, noreturn)) void _start(void) {

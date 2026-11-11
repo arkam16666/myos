@@ -104,11 +104,27 @@ pkg remove snake        ลบ
 pkg upgrade             อัปเดตแอปที่มีเวอร์ชันใหม่
 pkg list                แอปที่อยู่ในเครื่อง
 ```
-แอปที่มีตอนนี้ (33 ตัว):
+แอปที่มีตอนนี้ (37 ตัว):
 - **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps
 - **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf
 - **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz
 - **โปรแกรม C เดิม:** calc, cdemo, countdown, crashme, fortune, guess, python
+
+**ภาษาโปรแกรม** (`pkg search language`):
+| แพ็กเกจ | ภาษา | ตัวอย่าง |
+|---|---|---|
+| `lua` | Lua 5.4.7 ตัวจริง (port จาก C) | `lua`, `lua -e "print(2^10)"`, `lua game.lua` |
+| `python` | MicroPython (Python 3) | `python`, `python hello.py` |
+| `basic` | BASIC แบบมีเลขบรรทัด | `10 PRINT "HI"` แล้ว `RUN`, `SAVE "a.bas"`, `basic a.bas` |
+| `scheme` | Scheme (Lisp) | `(define (sq x) (* x x))` |
+| `forth` | Forth (ภาษาแบบ stack) | `: square dup * ; 7 square .` |
+| `bf` | Brainf*ck | `bf` |
+
+ใช้ `edit` เขียนไฟล์โปรแกรมบน Pi ได้เลย เช่น `edit game.lua` แล้วรันด้วย `lua game.lua`
+
+**C library ของ MyOS** (`csdk\include` + `csdk\libc`): `stdio` (ไฟล์บน MyFS), `malloc`, `printf`/`snprintf` (รวมทศนิยม), `strtod`, `string`, `ctype`, `math`, `setjmp`, `time` ใช้ port โปรแกรม C มาตรฐานมาลง MyOS ได้ (Lua port มาด้วยวิธีนี้ ไม่ต้องแก้ซอร์สของ Lua เลย) โปรแกรมได้หน่วยความจำ 2 MB + heap อีก 32 MB เพิ่ม port ใหม่ใน `$ports` ของ `arm\build.ps1`
+
+ข้อจำกัด: Pi ไม่มีนาฬิกา `os.time()` / `time()` นับจาก 1 ม.ค. 2000 ตอนเปิดเครื่อง, ยังรันคำสั่ง shell จากในโปรแกรมไม่ได้ (`os.execute`), ไม่มี Ctrl+C หยุดโปรแกรม
 
 เขียนแอปเพิ่มเองได้: วางไฟล์ `.py` ใน `apps\py\` ใส่บรรทัด `# @version 1.0` และ `# @description ...` แล้วเปิด `tools\repo.py` ใหม่ แอปใช้โมดูล `myos` ได้: `myos.key()` (อ่านปุ่มไม่ต้องรอ Enter), `myos.getkey()`, `myos.clear()`, `myos.move(x, y)`, `myos.cursor(on)`, `myos.ticks()` ทดสอบแอปทั้งหมดใน QEMU ด้วย `python tests\qemu_apps.py`
 
