@@ -1,6 +1,6 @@
 // fat.c - just enough FAT16/FAT32 to find one file on the SD card's first
-// partition (the Pi's "bootfs") and learn which sectors it occupies.
-// Nothing here ever writes to the card.
+// partition (the Pi's "bootfs") and learn which sectors it occupies, plus
+// the MBR partition table. Only mbr_set (for 'fsexpand') writes to the card.
 #include <stdint.h>
 #include "fat.h"
 #include "sd.h"
@@ -98,4 +98,38 @@ int fat_find_contiguous(const char *name83, fat_file_t *out) {
     }
     return FAT_ERR_NOTFOUND;
     #undef NEXT_CLUSTER
+}
+
+// ---------------------------------------------------------------- the MBR
+int mbr_read(mbr_part_t parts[4]) {
+    if (sd_read(0, sector)) return FAT_ERR_IO;
+    if (sector[510] != 0x55 || sector[511] != 0xAA) return FAT_ERR_NOFS;
+    for (int i = 0; i < 4; i++) {
+        const uint8_t *e = &sector[446 + 16 * i];
+        parts[i].type = e[4];
+        parts[i].start = rd32(e + 8);
+        parts[i].sectors = rd32(e + 12);
+    }
+    return 0;
+}
+
+int mbr_set(int index, uint8_t type, uint32_t start, uint32_t sectors) {
+    if (index < 0 || index > 3) return FAT_ERR_NOFS;
+    if (sd_read(0, sector)) return FAT_ERR_IO;
+    if (sector[510] != 0x55 || sector[511] != 0xAA) return FAT_ERR_NOFS;
+    uint8_t *e = &sector[446 + 16 * index];
+    e[0] = 0;                               // not bootable
+    e[1] = 0xFE; e[2] = 0xFF; e[3] = 0xFF;  // CHS: "too big, use the LBA fields"
+    e[4] = type;
+    e[5] = 0xFE; e[6] = 0xFF; e[7] = 0xFF;
+    for (int i = 0; i < 4; i++) {
+        e[8 + i] = (uint8_t)(start >> (8 * i));
+        e[12 + i] = (uint8_t)(sectors >> (8 * i));
+    }
+    if (sd_write(0, sector)) return FAT_ERR_IO;
+    mbr_part_t check[4];                    // read it back
+    if (mbr_read(check)) return FAT_ERR_IO;
+    if (check[index].type != type || check[index].start != start || check[index].sectors != sectors)
+        return FAT_ERR_IO;
+    return 0;
 }

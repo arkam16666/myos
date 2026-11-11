@@ -31,7 +31,9 @@ v1 "MYFS0001"
   sector 16..   file data, one contiguous run of sectors per file
 
 v2 "MYFS0002" (blocks are 512-byte sectors)
-  sector 0      "MYFS0002", u32 total, u32 bitmap start, u32 bitmap sectors, u32 flags;
+  sector 0      "MYFS0002", u32 total, u32 bitmap start, u32 bitmap sectors, u32 flags,
+                u32 bitmap sectors written (0 = all; past them the bitmap on disk is
+                whatever was there before and counts as free - big volumes);
                 bytes 128-255: the entry of the top folder "/"
   bitmap        1 bit per sector, 1 = used (bit s%8 of byte s/8)
   entry         128 bytes: name[64], u32 type (0 free, 1 file, 2 folder), u32 size,
@@ -60,7 +62,7 @@ NX_INLINE, NX_BLOCK = 6, 63
 T_FREE, T_FILE, T_DIR = 0, 1, 2
 NAME_MAX2 = 63
 DIR_FIRST, DIR_GROW = 4, 8
-MAX_SECTORS = 8 << 20
+MAX_SECTORS = 256 << 20          # 128 GB (arm/myfs.c: a partition)
 
 
 class FSError(Exception):
@@ -255,7 +257,12 @@ class V2:
         self.total, self.bm_start, self.bm_sectors, self.flags = struct.unpack_from("<IIII", sb, 8)
         if self.bm_sectors != (self.total + 4095) // 4096 or self.total > disk.total:
             raise FSError("damaged v2 superblock")
-        self.bm = bytearray(disk.read(self.bm_start, self.bm_sectors))
+        self.hw = struct.unpack_from("<I", sb, 24)[0]
+        if self.hw == 0 or self.hw > self.bm_sectors:
+            self.hw = self.bm_sectors
+        self.bm = bytearray(disk.read(self.bm_start, self.hw)).ljust(self.bm_sectors * SECTOR, b"\0")
+        for k in range(self.total, self.bm_sectors * 4096):     # past the end: "used"
+            self.bm[k >> 3] |= 1 << (k & 7)
         self.hint = self.bm_start + self.bm_sectors
 
     # ---- bitmap
@@ -271,6 +278,11 @@ class V2:
 
     def flush_bitmap(self):
         self.disk.write(self.bm_start, bytes(self.bm))
+        if self.hw < self.bm_sectors:           # all of it is written now
+            sb = bytearray(self.disk.read(0))
+            struct.pack_into("<I", sb, 24, 0)
+            self.disk.write(0, bytes(sb))
+            self.hw = self.bm_sectors
 
     def free_sectors(self):
         return sum(1 for k in range(self.total) if not self.bit(k))

@@ -24,11 +24,17 @@ RESERVED = 32
 MYFS_MB = 8
 
 
-def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_MB, myfs_mb=MYFS_MB):
-    """returns {"myfs": (first sector, sectors), "kernel": (first sector, sectors) or None}
-    version: MyFS format of MYFS.IMG; setup(fs): called to add more (folders...)"""
+def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_MB, myfs_mb=MYFS_MB,
+          boot_mb=None, second_type=0x83, second_fill=0):
+    """returns {"myfs": (first sector, sectors), "kernel": (first sector, sectors) or None,
+                "second": (first sector, sectors) or None}
+    version: MyFS format of MYFS.IMG; setup(fs): called to add more (folders...)
+    boot_mb: make the FAT partition this big and put a second partition (type
+    second_type, like a Raspberry Pi OS root file system) in the rest of the card,
+    its first second_fill MB filled with 0xFF (old data). The image is written
+    sparsely, so big cards are fine."""
     total = card_mb * 1024 * 1024 // SECTOR
-    part_sectors = total - PART_START
+    part_sectors = (boot_mb * 2048 if boot_mb else total) - PART_START
     # FAT32 with one sector per cluster
     clusters = part_sectors - RESERVED
     fat_size = (clusters * 4 + SECTOR - 1) // SECTOR + 1
@@ -53,14 +59,22 @@ def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_M
         kdata = open(kernel, "rb").read().ljust(1024 * 1024, b"\0")
     kernel_clusters = len(kdata) // SECTOR
 
-    img = bytearray(total * SECTOR)
+    chunks = []
 
     def put(lba, data):
-        img[lba * SECTOR:lba * SECTOR + len(data)] = data
+        chunks.append((lba, bytes(data)))
 
     # MBR: one partition, type 0x0C (FAT32 LBA)
     mbr = bytearray(SECTOR)
     mbr[446:462] = struct.pack("<B3sB3sII", 0x00, b"\0\0\0", 0x0C, b"\0\0\0", PART_START, part_sectors)
+    second = None
+    if boot_mb:
+        start2 = (PART_START + part_sectors + 8191) // 8192 * 8192
+        second = (start2, total - start2)
+        mbr[462:478] = struct.pack("<B3sB3sII", 0x00, b"\xFE\xFF\xFF", second_type, b"\xFE\xFF\xFF",
+                                   start2, total - start2)
+        if second_fill:
+            put(start2, b"\xFF" * (second_fill * 1024 * 1024))
     mbr[510:512] = b"\x55\xAA"
     put(0, mbr)
 
@@ -123,9 +137,13 @@ def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_M
         put(kernel_lba, kdata)
 
     with open(out_path, "wb") as f:
-        f.write(img)
+        f.truncate(total * SECTOR)
+        for lba, data in sorted(chunks):
+            f.seek(lba * SECTOR)
+            f.write(data)
     return {"myfs": (myfs_lba, file_clusters),
-            "kernel": (kernel_lba, kernel_clusters) if kdata else None}
+            "kernel": (kernel_lba, kernel_clusters) if kdata else None,
+            "second": second}
 
 
 def read_myfs(card_path, myfs_lba, sectors, out_path):

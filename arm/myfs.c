@@ -8,8 +8,11 @@
 //
 // v2 "MYFS0002" - every block is one 512-byte sector:
 //   sector 0     superblock: "MYFS0002", u32 total sectors, u32 bitmap start,
-//                u32 bitmap sectors, u32 flags; bytes 128-255 = the entry of
-//                the top folder "/"
+//                u32 bitmap sectors, u32 flags, u32 bitmap sectors written
+//                (0 = all; on a big volume only the first ones are written at
+//                format time, the rest of the bitmap on disk may hold anything
+//                and counts as all-free); bytes 128-255 = the entry of the top
+//                folder "/"
 //   bitmap       1 bit per sector (1 = in use), bit s%8 of byte s/8
 //   anything else: file data, folder tables and extent blocks, allocated from
 //                the bitmap
@@ -254,7 +257,8 @@ static int v1_rename(const char *from, const char *to) {
 #define NX_INLINE    6              // extents inside the entry
 #define NX_BLOCK     63             // extents in one extent block
 #define T_FREE       0
-#define MAX_SECTORS  (8u << 20)     // 4 GB: as big as a FAT file can be
+#define MAX_SECTORS  (256u << 20)   // 128 GB (a partition; a FAT file stops at 4 GB)
+#define BM_SMALL     (8u << 20)     // sectors the built-in bitmap covers (4 GB)
 #define DIR_FIRST    4              // sectors of a new folder (16 entries)
 #define DIR_GROW     8              // sectors added when a folder is full (32 entries)
 #define DEPTH_GUARD  40             // the checker goes no deeper (kernel stack)
@@ -262,8 +266,12 @@ static int v1_rename(const char *from, const char *to) {
 #define MAX_CHAINS   130
 
 static uint32_t total, bm_start, bm_sectors, free_sectors, alloc_hint;
+static uint32_t bm_hw;                              // bitmap sectors valid on disk
 static int nfiles, ndirs;
-static uint8_t bm[MAX_SECTORS / 8];                 // the bitmap, all of it in RAM
+static uint8_t bm_small[BM_SMALL / 8];              // the bitmap, all of it in RAM: here,
+static uint8_t *bm = bm_small;                      // or a bigger block (myfs_bitmap_memory)
+static uint32_t bm_cap = BM_SMALL;                  // sectors it can cover
+static uint8_t sb_buf[512] __attribute__((aligned(4)));   // sector 0 on its way out
 static uint8_t bm_dirty[MAX_SECTORS / 4096 / 8];    // bitmap sectors to write back
 static uint32_t xs[MAX_X][2];                       // extents being allocated
 static int nxs;
@@ -293,6 +301,11 @@ static const uint8_t *meta(uint32_t lba) {
 // every v2 write goes through here, so the cache never goes stale
 static int put_sector(uint32_t lba, const uint8_t *data) {
     uint32_t i = lba % CACHE_N;
+    if (lba == 0 && memcmp(data, V2_MAGIC, 8) == 0) {  // the superblock always carries
+        if (data != sb_buf) memcpy(sb_buf, data, 512);  // the current "bitmap written" mark
+        wr32(sb_buf + 24, bm_hw >= bm_sectors ? 0 : bm_hw);
+        data = sb_buf;
+    }
     if (lba >= total || dev_write(lba, data)) {
         if (lba < total && cache_tag[i] == lba + 1) cache_tag[i] = 0;
         return MYFS_ERR_IO;
@@ -322,8 +335,35 @@ static void mark(uint32_t s, uint32_t n, int used) {
 static int flush_bitmap(void) {
     for (uint32_t i = 0; i < bm_sectors; i++) {
         if (!(bm_dirty[i >> 3] >> (i & 7) & 1)) continue;
+        if (i >= bm_hw) {
+            // bitmap sectors from the mark on were never written (they hold whatever
+            // was on the disk before): write all of them up to this one from RAM,
+            // then move the mark in sector 0
+            for (uint32_t j = bm_hw; j <= i; j++) {
+                if (put_sector(bm_start + j, &bm[j * 512])) return MYFS_ERR_IO;
+                bm_dirty[j >> 3] &= (uint8_t)~(1u << (j & 7));
+            }
+            bm_hw = i + 1;
+            const uint8_t *s0 = meta(0);
+            if (!s0) return MYFS_ERR_IO;
+            memcpy(sb_buf, s0, 512);
+            if (put_sector(0, sb_buf)) return MYFS_ERR_IO;
+            continue;
+        }
         if (put_sector(bm_start + i, &bm[i * 512])) return MYFS_ERR_IO;
         bm_dirty[i >> 3] &= (uint8_t)~(1u << (i & 7));
+    }
+    return 0;
+}
+
+// any sector of the volume marked used in bitmap sector i (bits past the end don't count)
+static int bm_sector_used(uint32_t i) {
+    for (uint32_t b = i * 512; b < i * 512 + 512; b++) {
+        uint32_t first = b * 8;
+        if (first >= total) break;
+        uint8_t m = bm[b];
+        if (first + 8 > total) m &= (uint8_t)((1u << (total - first)) - 1);
+        if (m) return 1;
     }
     return 0;
 }
@@ -335,7 +375,15 @@ static void mark_tail(void) {
 
 static void recount_free(void) {
     free_sectors = 0;
-    for (uint32_t k = 0; k < total; k++) free_sectors += !bit(k);
+    uint32_t k = 0;
+    for (; k + 8 <= total; k += 8) {                // a byte at a time (big volumes)
+        uint8_t b = bm[k >> 3];
+        if (b == 0xFF) continue;
+        uint32_t used = 0;
+        for (; b; b &= (uint8_t)(b - 1)) used++;
+        free_sectors += 8 - used;
+    }
+    for (; k < total; k++) free_sectors += !bit(k);
 }
 
 // first run of `need` free sectors in [from, to); 0 = none (sector 0 is never free)
@@ -974,7 +1022,7 @@ static int rebuild(myfs_check_t *rep) {
     walk(root.e, 0);
     int trouble = W.damaged || W.deep || W.io;
     uint32_t leaked = 0, missing = 0;
-    for (uint32_t i = 0; i < bm_sectors; i++) {
+    for (uint32_t i = 0; i < bm_hw; i++) {         // (past the mark the disk copy means nothing)
         if (dev_read(bm_start + i, tmp)) return MYFS_ERR_IO;
         uint8_t *mine = &bm[i * 512];
         int differs = 0;
@@ -989,6 +1037,13 @@ static int rebuild(myfs_check_t *rep) {
         if (differs && put_sector(bm_start + i, mine)) return MYFS_ERR_IO;
     }
     memset(bm_dirty, 0, sizeof bm_dirty);
+    for (uint32_t i = bm_hw; i < bm_sectors; i++) {    // in use past the mark: write it down
+        if (bm_sector_used(i)) {
+            for (uint32_t x = i * 4096; x < i * 4096 + 4096 && x < total; x++) missing += bit(x);
+            bm_dirty[i >> 3] |= (uint8_t)(1u << (i & 7));
+        }
+    }
+    if (flush_bitmap()) return MYFS_ERR_IO;
     recount_free();
     nfiles = (int)W.files;
     ndirs = (int)W.dirs;
@@ -1008,10 +1063,12 @@ static int v2_mount(void) {
     total = rd32(s + 8);
     bm_start = rd32(s + 12);
     bm_sectors = rd32(s + 16);
-    if (total < 32 || total > dev.sectors || total > MAX_SECTORS ||
+    if (total < 32 || total > dev.sectors || total > bm_cap ||
         bm_sectors != (total + 4095) / 4096 || bm_start == 0 || bm_start + bm_sectors > total) {
         return MYFS_ERR_CORRUPT;            // MyFS v2, but not a sane one: never "format" it
     }
+    bm_hw = rd32(s + 24);
+    if (bm_hw == 0 || bm_hw > bm_sectors) bm_hw = bm_sectors;
     cache_clear();
     alloc_hint = bm_start + bm_sectors;
     int r = rebuild(&mount_report);
@@ -1023,7 +1080,7 @@ static int v2_mount(void) {
 
 // a fresh v2 volume: bitmap right after the superblock, then "/"
 static int v2_format(uint32_t sectors) {
-    if (sectors > MAX_SECTORS) sectors = MAX_SECTORS;
+    if (sectors > bm_cap) sectors = bm_cap;
     if (sectors < 64) return MYFS_ERR_FULL;
     total = sectors;
     bm_start = 1;
@@ -1036,7 +1093,10 @@ static int v2_format(uint32_t sectors) {
     free_sectors = total;
     mark(0, root + DIR_GROW, 1);
     if (zero_sectors(root, DIR_GROW)) return MYFS_ERR_IO;
-    for (uint32_t i = 0; i < bm_sectors; i++) {
+    // a big volume: write only the bitmap sectors in use (the rest is written
+    // when it's first needed, see flush_bitmap); 60 GB would be 15 MB of zeros
+    bm_hw = bm_sectors <= 64 ? bm_sectors : (root + DIR_GROW + 4095) / 4096;
+    for (uint32_t i = 0; i < bm_hw; i++) {
         if (put_sector(bm_start + i, &bm[i * 512])) return MYFS_ERR_IO;
     }
     memset(bm_dirty, 0, sizeof bm_dirty);
@@ -1079,6 +1139,17 @@ int myfs_mount(const myfs_dev_t *d) {
 }
 
 int myfs_mounted(void) { return mounted != 0; }
+
+void myfs_bitmap_memory(void *mem, uint32_t sectors) {
+    if (mounted == 2) {                     // the bitmap in use moves along
+        if (sectors < bm_sectors * 4096) return;
+        memcpy(mem, bm, bm_sectors * 512);
+    }
+    bm = mem;
+    bm_cap = sectors < MAX_SECTORS ? sectors & ~4095u : MAX_SECTORS;
+}
+
+uint32_t myfs_bitmap_cap(void) { return bm_cap; }
 int myfs_version(void) { return mounted; }
 
 int myfs_format(const myfs_dev_t *d) {
@@ -1378,7 +1449,7 @@ int myfs_upgrade(void) {
     // v2 gets the whole myfs.img (v1 only knew the size it was formatted with;
     // anything after that is unused)
     uint32_t tot = dev.sectors;
-    if (tot > MAX_SECTORS) tot = MAX_SECTORS;
+    if (tot > bm_cap) tot = bm_cap;
     if (tot < rd32(v1_super + 8) || tot < 64) return MYFS_ERR_CORRUPT;
     int list[MYFS_MAX_FILES], n = 0;
     for (int i = 0; i < MYFS_MAX_FILES; i++) {
@@ -1459,6 +1530,7 @@ int myfs_upgrade(void) {
         if (put_sector(root + k, tmp)) { total = 0; return MYFS_ERR_IO; }
     }
     mark(1, V1_DATA_START - 1, 0);          // the old directory: free once v2 is live
+    bm_hw = bm_sectors;                     // all of the bitmap is written here
     for (uint32_t i = 0; i < bm_sectors; i++) {
         if (put_sector(b + i, &bm[i * 512])) { total = 0; return MYFS_ERR_IO; }
     }

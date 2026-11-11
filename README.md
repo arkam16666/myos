@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File arm\update-pi.ps1
 
 **ใช้งาน:** เสียบสาย USB เข้าช่อง **USB** ของ Pi (ช่องกลาง) MyOS จะขึ้นเป็นพอร์ต COM ใหม่ เปิดด้วย PuTTY (Serial) ไฟ LED สีเขียวกะพริบ "ติ๊ก-ติ๊ก… เว้น" = MyOS รันอยู่, กะพริบรัวเร็ว = พัง (กด `R` ในหน้าต่าง COM port เพื่อรีสตาร์ทได้เลย ไม่ต้องถอดสาย)
 
-คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cd`, `pwd`, `mkdir`, `rmdir`, `tree`, `cat`, `write`, `cp`, `mv`, `rm`, `df`, `fsck`, `fsupgrade`, `format`, `pkg`, `net`, `wifi`, `ping`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
+คำสั่งของ MyOS Pi: `help`, `info`, `uptime`, `sd`, `hexdump`, `ls`, `cd`, `pwd`, `mkdir`, `rmdir`, `tree`, `cat`, `write`, `cp`, `mv`, `rm`, `df`, `fsck`, `fsupgrade`, `fsexpand`, `format`, `pkg`, `net`, `wifi`, `ping`, `passwd`, `exit`, `crash`, `update`, `recv`, `reboot` และชื่อโปรแกรมที่ติดตั้งไว้
 
 **เครือข่ายผ่านสาย USB:** นอกจากพอร์ต COM แล้ว Pi ยังขึ้นเป็นการ์ดเครือข่าย "MyOS Network" บน Windows (Windows 10 ขึ้นไปโหลด driver เอง) Pi คือ `192.168.7.1` (ชื่อ `myos.usb`) คอมจะได้ `192.168.7.2` อัตโนมัติ
 - `ping 192.168.7.1`
@@ -200,6 +200,15 @@ fsck                   ตรวจระบบไฟล์ (fsck fix = ลบ e
 - พื้นที่ที่ v1 ไม่เคยคืน (ไฟล์ที่ลบไปแล้ว) ได้คืนหมดหลังอัปเกรด
 - หลังอัปเกรด MyOS PC (x86) และ kernel ของ Pi รุ่นก่อน v2 อ่าน `myfs.img` นี้ไม่ได้แล้ว ถ้าต้องย้อนกลับ ให้วาง `myfs.img` ที่สำรองไว้กลับลงการ์ด
 - ทำบนคอมแทนก็ได้: `python tools\myfs.py myfs.img upgrade`
+
+**ใช้ SD card ทั้งใบ (`fsexpand`)**: ปกติ MyFS อยู่ในไฟล์ `myfs.img` (16 MB) บน partition boot ส่วนที่เหลือของการ์ดเป็น partition ของ Linux เดิม `fsexpand` ให้ MyFS ใช้ที่เหลือทั้งหมดแทน (การ์ด 64 GB ได้ราว 59 GB, สูงสุด 128 GB)
+1. พิมพ์ `fsexpand` ก่อน: บอกว่าจะได้กี่ MB และจะลบ partition ไหน (ยังไม่แตะอะไร)
+2. พิมพ์ `fsexpand yes`: อ่านทุกไฟล์เข้า RAM, สร้าง MyFS v2 ใน partition 2, เขียนไฟล์กลับ, อ่านเทียบทุกไฟล์ แล้วเปลี่ยนตาราง partition เป็นขั้นสุดท้าย (partition 2 เป็น type `0xDA`)
+3. `df` ขึ้น `sd-part2  59.0G`, `sd` ขึ้น `MyFS on:  partition 2` บูตครั้งต่อไป MyOS ใช้ partition นี้เอง
+- **Linux ใน partition 2 หายถาวร** (กลับไปใช้ Raspberry Pi OS ต้องลงใหม่) `myfs.img` เดิมยังอยู่บน partition boot เป็นสำเนาเก่า MyOS ไม่ใช้แล้ว
+- ไฟดับก่อนเขียนตาราง partition = การ์ดยังบูตด้วย `myfs.img` เดิม (ไม่เคยถูกแก้) ลองใหม่ได้
+- ดิสก์ใหญ่ใช้ RAM 1 bit ต่อ sector (60 GB ≈ 15 MB) และเขียน bitmap บนดิสก์เฉพาะส่วนที่ใช้ บูตจึงไม่ช้าลง
+- Windows เห็นแค่ partition boot (type `0xDA` ไม่มีใครแตะ) ส่วนไฟล์ใน partition 2 ส่งผ่าน `arm\push-pi.ps1` ได้เหมือนเดิม
 
 **ขยาย `myfs.img` ให้ใหญ่ขึ้น** (เช่น 256 MB): สร้างอันใหม่แล้วคัดลอกทุกอย่างจากอันเดิม (อันเดิมเป็น v1 หรือ v2 ก็ได้)
 ```powershell

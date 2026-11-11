@@ -116,6 +116,7 @@
   - shell: `cd`, `pwd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm -r`, `tree`, `fsck`, `fsupgrade` (โฟลเดอร์ปัจจุบันแยกต่อ terminal)
   - MyFS v1 เดิมยังใช้ได้ `fsupgrade` แปลงเป็น v2 ในที่เดิมโดยไม่ย้ายข้อมูล (ไฟล์ครบทุกไฟล์), `tools/myfs.py` อ่าน/เขียนได้ทั้งสองแบบ
   - x86 ยังใช้ v1 อยู่
+  - `fsexpand`: ย้าย MyFS จาก `myfs.img` (16 MB) ไปใช้ partition 2 ทั้งหมดของ SD card (แทน Linux เดิม) ดิสก์ใหญ่ได้ถึง 128 GB (bitmap ใน RAM จาก pool, เขียน bitmap บนดิสก์เฉพาะส่วนที่ใช้) ✅ Pi จริง: 60 GB, 48 ไฟล์ครบ, fsck ผ่าน; QEMU: tests/qemu_fs.py F (256 MB), G (8 GB)
 
 ## เฟส 4: งานใหญ่
 
@@ -177,9 +178,9 @@
 - [x] **4.6.9** pkg จากอินเทอร์เน็ต: DNS (lwIP), HTTPS (TLS 1.3 เขียนเอง: X25519 + ChaCha20-Poly1305), คลังแอปบน GitHub (branch packages) เซ็นด้วย Ed25519
   - เสร็จเมื่อ: Pi ต่อ Wi-Fi แล้ว pkg update / pkg install ดึงจาก GitHub ได้โดยไม่ต้องเปิดคอม ✅ (ลายเซ็นผ่าน, node 728 KB)
 - [x] **4.6.10** `pip` (และ `mip`): ไลบรารี Python จาก micropython-lib ลง `/lib` (ตาม dependency, ตรวจ SHA-256 ทุกไฟล์), `list`/`show`/`uninstall`/`search`, python 1.7 มี `hashlib`/`binascii`/`re`/`time.localtime` และค้น `/lib`
-  - เสร็จเมื่อ: `pip install datetime` บน Pi จริงแล้ว `import datetime` ได้ (QEMU ✅ ด้วยเว็บจำลอง, `tests/host/pip_host.py` กับ micropython.org จริง ✅, Pi จริง: รอทดสอบ)
+  - เสร็จเมื่อ: `pip install datetime` บน Pi จริงแล้ว `import datetime` ได้ (QEMU ✅ ด้วยเว็บจำลอง, `tests/host/pip_host.py` กับ micropython.org จริง ✅, Pi จริง ✅ 2026-11-12)
 - [x] **4.6.11** `npm`: ลงแพ็กเกจ JavaScript ล้วนจาก registry.npmjs.org ลง `node_modules` (semver ^ ~ x >= ||, dependency ซ้อน, ตรวจ sha512, gunzip + tar เขียนเอง, `npm install/ls/uninstall/view/init/run`), `require()` หา `node_modules` แบบ Node (`main`/`exports`, ES module ด้วย)
-  - เสร็จเมื่อ: `npm install left-pad` แล้ว `require('left-pad')` ได้ (QEMU: ไฟล์ .tgz ✅ tests/qemu_langs.py npm 24 ข้อ; registry จริงผ่าน TLS 1.2 รอทดสอบบน Pi)
+  - เสร็จเมื่อ: `npm install left-pad` แล้ว `require('left-pad')` ได้ (QEMU: ไฟล์ .tgz ✅ tests/qemu_langs.py npm 24 ข้อ; registry จริงผ่าน TLS 1.2 บน Pi ✅ left-pad, chalk@4 + 5 dependency)
 
 ### 4.8 โปรแกรม Linux บน Pi (เป้าหมาย: แอปจาก apt)
 แอปใน `.deb` คือโปรแกรม Linux จึงให้ MyOS รันไฟล์ ELF ของ Linux ได้โดยจำลอง system call ของ Linux (`arm\linux.c`)

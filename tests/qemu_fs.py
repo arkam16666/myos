@@ -147,6 +147,76 @@ print("frag", back == data, len(back))
 """
 
 
+# ------------------------------------------------------------------ F, G
+def read_part(card, second, out):
+    """partition 2 of a card image -> a file tools/myfs.py can open"""
+    with open(card, "rb") as f, open(out, "wb") as o:
+        f.seek(second[0] * 512)
+        left = second[1] * 512
+        while left:
+            chunk = f.read(min(left, 8 << 20))
+            if not chunk:
+                break
+            o.write(chunk)
+            left -= len(chunk)
+    return out
+
+
+def expand_test(P, tmp, card_mb, fill_mb, check_on_pc):
+    """fsexpand: myfs.img (v1, with files) -> MyFS v2 in partition 2 (old 'Linux' data there)"""
+    card = os.path.join(tmp, f"{P.lower()}.img")
+    want = {}
+    layout = mksdimg.build(card, [], version=1, card_mb=card_mb, boot_mb=64, second_fill=fill_mb,
+                           setup=lambda fs: want.update(v1_files(fs, tmp)))
+    n = len(want)
+    part_mb = layout["second"][1] // 2048
+    pi = Pi(card)
+    try:
+        out = pi.read_prompt(15)
+        check(P, "boot: myfs.img", f"MyFS mounted from myfs.img, {n} file(s)" in out, out)
+        expect(P, pi, "fsexpand asks first", "fsexpand",
+               [f"rest of the SD card: {part_mb} MB", "ERASES partition 2 (type 0x83 Linux", "fsexpand yes"])
+        expect(P, pi, "nothing changed yet", "sd", ["myfs.img: sectors"])
+        expect(P, pi, "fsexpand yes", "fsexpand yes",
+               [f"{n} file(s), 0 folder(s)", "Done: MyFS now uses partition 2"], 120)
+        expect(P, pi, "files there", "ls", [f"{n} file(s)", "data01.bin", "readme.txt"])
+        expect(P, pi, "cat", "cat readme.txt", ["Welcome to MyOS!"])
+        expect(P, pi, "df", "df", ["sd-part2"])
+        expect(P, pi, "folders", "mkdir big", [], absent=["need", "Bad", "rror"])
+        expect(P, pi, "write in it", "write big/new.txt on the partition", ["Wrote 17 bytes"])
+        expect(P, pi, "again: already", "fsexpand", ["already has a partition"])
+        expect(P, pi, "fsck", "fsck", ["No problems found."], 60)
+    finally:
+        pi.close()
+    pi = Pi(card)
+    try:
+        out = pi.read_prompt(30)
+        check(P, "after reboot: partition 2", f"MyFS mounted from partition 2, {n + 1} file(s), 1 folder(s)" in out, out)
+        expect(P, pi, "sd", "sd", ["MyFS on:  partition 2", f"({part_mb} MB)", "v2"])
+        expect(P, pi, "still there", "cat big/new.txt", ["on the partition"])
+        out = expect(P, pi, "free space", "df", ["sd-part2"])
+        expect(P, pi, "fsck after reboot", "fsck", ["No problems found."], 60)
+    finally:
+        pi.close()
+    with open(card, "rb") as f:
+        mbr = f.read(512)
+    check(P, "MBR: partition 2 is type 0xDA", mbr[446 + 16 + 4] == 0xDA, mbr[446 + 16 + 4])
+    if check_on_pc:
+        check_files(P, read_part(card, layout["second"], os.path.join(tmp, f"{P.lower()}-p2.img")), want,
+                    {"/big/new.txt": b"on the partition\n"})
+    return card
+
+
+def part_f(tmp):
+    expand_test("F", tmp, 256, 8, True)
+
+
+def part_g(tmp):
+    """bigger than the built-in 4 GB bitmap: an 8 GB card (written sparsely)"""
+    card = expand_test("G", tmp, 8192, 4, False)
+    os.remove(card)
+
+
 # ------------------------------------------------------------------ A
 def part_a(tmp):
     card = os.path.join(tmp, "a.img")
@@ -443,10 +513,11 @@ def part_e(tmp):
 
 
 def main():
-    parts = [p.upper() for p in sys.argv[1:]] or ["A", "B", "C", "D", "E"]
+    parts = [p.upper() for p in sys.argv[1:]] or ["A", "B", "C", "D", "E", "F", "G"]
     tmp = tempfile.mkdtemp(prefix="myos-fstest-")
     for p in parts:
-        {"A": part_a, "B": part_b, "C": part_c, "D": part_d, "E": part_e}[p](tmp)
+        {"A": part_a, "B": part_b, "C": part_c, "D": part_d, "E": part_e, "F": part_f,
+         "G": part_g}[p](tmp)
     print(f"{failed} failed" if failed else "all passed")
     return failed
 

@@ -333,9 +333,47 @@ static int fat_status = 1;
 static myfs_dev_t myfs_dev;
 static int mount_status = MYFS_ERR_NOFS;
 
+static int myfs_part = -1;          // the MBR entry MyFS lives in ('fsexpand'), -1 = myfs.img
+
+static const char *storage_name(void) {
+    static char name[] = "partition 0";
+    if (myfs_part < 0) return "myfs.img";
+    name[10] = (char)('1' + myfs_part);
+    return name;
+}
+
+// RAM for the free-space bitmap of a volume bigger than the built-in one (4 GB):
+// 1 bit per sector, ~15 MB for 60 GB, taken from the program pool for good
+static int bitmap_for(uint32_t sectors) {
+    if (sectors <= myfs_bitmap_cap()) return 1;
+    const uint64_t block = 2u << 20;
+    uint64_t bytes = sectors / 8 + 512;
+    int blocks = (int)((bytes + block - 1) / block);
+    uint64_t mem = proc_mem_alloc(blocks);
+    if (!mem) return 0;
+    uint64_t bits = (uint64_t)blocks * block * 8;
+    myfs_bitmap_memory((void *)mem, bits > 0xFFFFF000u ? 0xFFFFF000u : (uint32_t)bits);
+    return 1;
+}
+
 static void storage_init(void) {
     sd_status = sd_init();
     if (sd_status) return;
+    mbr_part_t parts[4];
+    if (mbr_read(parts) == 0) {             // a MyFS partition ('fsexpand') wins over myfs.img
+        for (int i = 1; i < 4; i++) {
+            if (parts[i].type != MBR_TYPE_MYFS || parts[i].sectors < 64) continue;
+            myfs_part = i;
+            fat_status = 0;
+            myfs_dev.start = parts[i].start;
+            myfs_dev.sectors = parts[i].sectors;
+            myfs_dev.read = sd_read;
+            myfs_dev.write = sd_write;
+            bitmap_for(myfs_dev.sectors);
+            mount_status = myfs_mount(&myfs_dev);
+            return;
+        }
+    }
     fat_file_t f;
     fat_status = fat_find_contiguous("MYFS    IMG", &f);
     if (fat_status) return;
@@ -398,15 +436,19 @@ static void print_storage_status(void) {
         console_puts("can't read the boot partition\n\n");
     } else if (!myfs_mounted()) {
         if (mount_status == MYFS_ERR_NOFS) {
-            console_puts("myfs.img has no file system. Type 'format' to create one.\n\n");
+            console_puts(storage_name());
+            console_puts(" has no file system. Type 'format' to create one.\n\n");
         } else {                    // there is a MyFS, it just can't be used: never suggest format
-            console_puts("myfs.img has MyFS, but it can't be mounted (");
+            console_puts(storage_name());
+            console_puts(" has MyFS, but it can't be mounted (");
             console_puts(myfs_error(mount_status));
             console_puts(").\n      Don't 'format': copy myfs.img to the PC and run\n"
                          "      python tools/myfs.py myfs.img fsck\n\n");
         }
     } else {
-        console_puts("MyFS mounted from myfs.img, ");
+        console_puts("MyFS mounted from ");
+        console_puts(storage_name());
+        console_puts(", ");
         print_dec((uint64_t)myfs_count());
         console_puts(" file(s)");
         if (myfs_version() == 1) {
@@ -456,7 +498,8 @@ static void cmd_help(void) {
                  "  df        how full the disk (MyFS) is\n"
                  "  fsck      check the file system ('fsck fix' removes damaged entries)\n"
                  "  fsupgrade turn an old MyFS v1 into v2 (folders), keeping every file\n"
-                 "  format    erase myfs.img, create an empty file system\n"
+                 "  fsexpand  give MyFS the rest of the SD card (erases its 2nd partition)\n"
+                 "  format    erase the disk, create an empty file system\n"
                  "  pkg       apps: pkg update | search | install N | remove N | list\n"
                  "  apt       the same as pkg (apt install -y N, apt show N ...)\n"
                  "  net       USB network status (the Pi is 192.168.7.1)\n"
@@ -525,7 +568,11 @@ static void cmd_sd(void) {
     print_dec(sd_base_clock() / 1000000);
     console_puts(" MHz, on ");
     console_puts(sd_controller());
-    console_puts("\nmyfs.img: ");
+    console_puts(myfs_part < 0 ? "\nmyfs.img: " : "\nMyFS on:  ");
+    if (myfs_part >= 0) {
+        console_puts(storage_name());
+        console_puts(", ");
+    }
     if (fat_status) {
         console_puts("not usable (");
         print_signed(fat_status);
@@ -778,24 +825,27 @@ static void cmd_tree(const char *arg) {
     console_puts(" folder(s)\n");
 }
 
-static void print_size_kb(uint32_t kb) {       // 512K, 14.8M (like df -h)
+static int dec_width(uint64_t v);
+
+static void print_size_kb(uint32_t kb) {       // 512K, 14.8M, 58.9G (like df -h)
     if (kb < 1024) {
         print_dec(kb);
         console_putc('K');
         return;
     }
-    uint32_t tenths = (uint32_t)(((uint64_t)kb * 10 + 512) / 1024);
+    int giga = kb >= 1024u * 1024;
+    uint32_t unit = giga ? 1024u * 1024 : 1024u;
+    uint32_t tenths = (uint32_t)(((uint64_t)kb * 10 + unit / 2) / unit);
     print_dec(tenths / 10);
     console_putc('.');
     print_dec(tenths % 10);
-    console_putc('M');
+    console_putc(giga ? 'G' : 'M');
 }
 
 static int size_width(uint32_t kb) {            // characters print_size_kb will use
-    int digits = 1;
-    uint32_t v = kb < 1024 ? kb : (uint32_t)(((uint64_t)kb * 10 + 512) / 1024 / 10);
-    while (v >= 10) { v /= 10; digits++; }
-    return kb < 1024 ? digits + 1 : digits + 3;
+    if (kb < 1024) return dec_width(kb) + 1;
+    uint32_t unit = kb >= 1024u * 1024 ? 1024u * 1024 : 1024u;
+    return dec_width(((uint64_t)kb * 10 + unit / 2) / unit / 10) + 3;
 }
 
 static void df_column(uint32_t kb) {
@@ -815,7 +865,7 @@ static void cmd_df(void) {
     uint32_t size = myfs_total_kb(), avail = myfs_free_kb();
     uint32_t used = size > avail ? size - avail : 0;
     console_puts("Filesystem   Size   Used  Avail  Use%  Files  Mounted on\n");
-    console_puts("myfs.img  ");
+    console_puts(myfs_part < 0 ? "myfs.img  " : "sd-part2  ");
     df_column(size);
     df_column(used);
     df_column(avail);
@@ -997,13 +1047,224 @@ static void cmd_fsupgrade(void) {
     console_puts(" KB free. Folders work now: try 'mkdir'.\n");
 }
 
+// ---------------------------------------------------------------
+//  fsexpand: move MyFS from myfs.img (a file in the boot partition) into a
+//  partition that fills the rest of the SD card. Every file goes through
+//  RAM: read them all, format the partition as MyFS v2, write them back,
+//  compare, and only then write the partition table. Power lost before that
+//  last write = the card still boots with the old myfs.img, which is never
+//  changed (it stays behind as an old copy).
+// ---------------------------------------------------------------
+#define PART_MAX_SECTORS (256u << 20)       // 128 GB, as big as MyFS v2 gets here
+#define BLOCK_BYTES (2u << 20)
+
+typedef struct {                            // one file or folder in the copy
+    uint8_t type;                           // MYFS_FILE / MYFS_DIR
+    uint8_t pad;
+    uint16_t len;                           // path length (no 0), then the path, then the data
+    uint32_t size;
+} xrec_t;
+
+static uint32_t xrec_bytes(const xrec_t *r) {
+    uint32_t n = (uint32_t)sizeof *r + r->len + (r->type == MYFS_FILE ? r->size : 0);
+    return (n + 7) & ~7u;
+}
+
+static uint8_t cmp_buf[4096] __attribute__((aligned(8)));
+
+static void print_mb(uint64_t sectors) {
+    print_dec(sectors / 2048);
+    console_puts(" MB");
+}
+
+static void cmd_fsexpand(const char *arg) {
+    if (!need_fs()) return;
+    if (myfs_part >= 0) {
+        console_puts("MyFS already has a partition of its own (");
+        console_puts(storage_name());
+        console_puts(", ");
+        print_mb(myfs_dev.sectors);
+        console_puts(").\n");
+        return;
+    }
+    mbr_part_t parts[4];
+    if (mbr_read(parts)) {
+        console_puts("Can't read the SD card's partition table.\n");
+        return;
+    }
+    if (parts[2].type || parts[3].type || parts[1].type == 0x05 || parts[1].type == 0x0F ||
+        parts[1].type == 0x85) {
+        console_puts("This card has more partitions than a Raspberry Pi card; MyOS won't guess\n"
+                     "which one it may erase. Nothing was changed.\n");
+        return;
+    }
+    uint64_t card = sd_sectors();
+    uint32_t boot_end = parts[0].start + parts[0].sectors;
+    uint32_t start = parts[1].type ? parts[1].start : (boot_end + 8191) / 8192 * 8192;
+    if (start < boot_end || card < (uint64_t)start + 64 * 2048) {
+        console_puts("There is no room (64 MB or more) after the boot partition.\n");
+        return;
+    }
+    uint64_t size64 = card - start;
+    uint32_t size = size64 > PART_MAX_SECTORS ? PART_MAX_SECTORS : (uint32_t)size64;
+    if (strcmp(arg, "yes") != 0) {
+        console_puts("MyFS can have the rest of the SD card: ");
+        print_mb(size);
+        console_puts(" (now ");
+        print_mb(myfs_dev.sectors);
+        console_puts(" in myfs.img).\n");
+        if (parts[1].type) {
+            static const char hex[] = "0123456789ABCDEF";
+            console_puts("This ERASES partition 2 (type 0x");
+            console_putc(hex[parts[1].type >> 4]);
+            console_putc(hex[parts[1].type & 15]);
+            console_puts(parts[1].type == 0x83 ? " Linux, " : ", ");
+            print_mb(parts[1].sectors);
+            console_puts("): whatever is on it is gone for good.\n");
+        }
+        console_puts("Every file and folder is copied over; myfs.img stays as it is (an old copy).\n"
+                     "Type 'fsexpand yes' to go ahead.\n");
+        return;
+    }
+
+    // 1. every file and folder into RAM, folders before what's in them
+    uint32_t used_kb = myfs_total_kb() - myfs_free_kb();
+    uint64_t need = (uint64_t)used_kb * 1024 + (uint64_t)(myfs_count() + myfs_dir_count() + 16) * 512
+                    + BLOCK_BYTES;
+    int blocks = (int)(need / BLOCK_BYTES + 1);
+    uint8_t *buf = (uint8_t *)proc_mem_alloc(blocks);
+    if (!buf) {
+        console_puts("Not enough memory to hold the files. Nothing was changed.\n");
+        return;
+    }
+    uint64_t cap = (uint64_t)blocks * BLOCK_BYTES, len = 0, pos = 0;
+    uint32_t files = 0, dirs = 0;
+    xrec_t *top = (xrec_t *)buf;
+    top->type = MYFS_DIR;
+    top->len = 1;
+    top->size = 0;
+    buf[sizeof *top] = '/';
+    len = xrec_bytes(top);
+    const char *why = 0;
+    console_puts("Reading the files ...\n");
+    while (pos < len && !why) {
+        xrec_t *r = (xrec_t *)(buf + pos);
+        char path[MYFS_PATH_MAX];
+        memcpy(path, r + 1, r->len);
+        path[r->len] = 0;
+        pos += xrec_bytes(r);
+        if (r->type != MYFS_DIR) continue;
+        for (int i = 0; !why; i++) {
+            char name[MYFS_NAME_MAX + 1];
+            uint32_t sz = 0;
+            int t = myfs_readdir(path, i, name, &sz);
+            if (t <= 0) {
+                if (t < 0) why = "a folder can't be read";
+                break;
+            }
+            uint32_t pl = (uint32_t)strlen(path), nl = (uint32_t)strlen(name);
+            uint32_t full = (pl > 1 ? pl : 0) + 1 + nl;
+            if (full >= MYFS_PATH_MAX) { why = "a path is too long"; break; }
+            xrec_t *c = (xrec_t *)(buf + len);
+            c->type = (uint8_t)t;
+            c->len = (uint16_t)full;
+            c->size = t == MYFS_FILE ? sz : 0;
+            if (len + xrec_bytes(c) > cap) { why = "not enough memory"; break; }
+            char *cp = (char *)(c + 1);
+            if (pl > 1) memcpy(cp, path, pl);
+            cp[pl > 1 ? pl : 0] = '/';
+            memcpy(cp + full - nl, name, nl);
+            if (t == MYFS_FILE) {
+                char fpath[MYFS_PATH_MAX];
+                memcpy(fpath, cp, full);
+                fpath[full] = 0;
+                if (sz && myfs_read(fpath, 0, cp + full, sz) != (int)sz) { why = "a file can't be read"; break; }
+                files++;
+            } else {
+                dirs++;
+            }
+            len += xrec_bytes(c);
+        }
+    }
+    if (why) {
+        console_puts("Stopped: ");
+        console_puts(why);
+        console_puts(". Nothing was changed.\n");
+        proc_mem_free((uint64_t)buf, blocks);
+        return;
+    }
+    print_dec(files);
+    console_puts(" file(s), ");
+    print_dec(dirs);
+    console_puts(" folder(s). Making MyFS v2 in partition 2 (");
+    print_mb(size);
+    console_puts(") ...\n");
+
+    // 2. the new file system, and everything written back into it
+    myfs_dev_t nd = { start, size, sd_read, sd_write };
+    if (!bitmap_for(size)) why = "not enough memory for the free-space map";
+    else if (myfs_format(&nd)) why = "the partition can't be written";
+    for (pos = xrec_bytes(top); pos < len && !why; pos += xrec_bytes((xrec_t *)(buf + pos))) {
+        xrec_t *r = (xrec_t *)(buf + pos);
+        char path[MYFS_PATH_MAX];
+        memcpy(path, r + 1, r->len);
+        path[r->len] = 0;
+        int e = r->type == MYFS_DIR ? myfs_mkdir(path)
+                                    : myfs_write(path, (const uint8_t *)(r + 1) + r->len, r->size);
+        if (e) {
+            console_puts(path);
+            console_puts(": ");
+            console_puts(myfs_error(e));
+            console_putc('\n');
+            why = "a file can't be written";
+        }
+    }
+    // 3. read it all back
+    for (pos = xrec_bytes(top); pos < len && !why; pos += xrec_bytes((xrec_t *)(buf + pos))) {
+        xrec_t *r = (xrec_t *)(buf + pos);
+        char path[MYFS_PATH_MAX];
+        memcpy(path, r + 1, r->len);
+        path[r->len] = 0;
+        uint32_t sz = 0;
+        if (myfs_stat(path, &sz) != r->type || (r->type == MYFS_FILE && sz != r->size)) {
+            why = "a copy is missing";
+            break;
+        }
+        const uint8_t *data = (const uint8_t *)(r + 1) + r->len;
+        for (uint32_t off = 0; r->type == MYFS_FILE && off < r->size && !why; off += sizeof cmp_buf) {
+            uint32_t n = r->size - off < sizeof cmp_buf ? r->size - off : sizeof cmp_buf;
+            if (myfs_read(path, off, cmp_buf, n) != (int)n || memcmp(cmp_buf, data + off, n) != 0)
+                why = "a copy differs";
+        }
+    }
+    // 4. the switch: one sector of the partition table
+    if (!why && mbr_set(1, MBR_TYPE_MYFS, start, size)) why = "the partition table can't be written";
+    proc_mem_free((uint64_t)buf, blocks);
+    if (why) {
+        console_puts("Stopped: ");
+        console_puts(why);
+        console_puts(". The partition table wasn't changed: MyOS keeps using myfs.img.\n");
+        mount_status = myfs_mount(&myfs_dev);
+        return;
+    }
+    myfs_dev = nd;
+    myfs_part = 1;
+    mount_status = 0;
+    console_puts("Done: MyFS now uses partition 2, ");
+    print_dec(myfs_free_kb() / 1024);
+    console_puts(" MB free. (myfs.img is still on the boot partition as an old\n"
+                 "copy; MyOS doesn't use it any more.)\n");
+}
+
 static void cmd_format(const char *arg) {
     if (sd_status || fat_status) {
-        console_puts("No usable myfs.img. Type 'sd' for details.\n");
+        console_puts("No usable disk. Type 'sd' for details.\n");
         return;
     }
     if (strcmp(arg, "yes") != 0) {
-        console_puts("This ERASES everything in myfs.img. Type 'format yes' to continue.\n");
+        console_puts("This ERASES everything in ");
+        console_puts(storage_name());
+        console_puts(". Type 'format yes' to continue.\n");
         return;
     }
     if (myfs_format(&myfs_dev)) {
@@ -1011,7 +1272,8 @@ static void cmd_format(const char *arg) {
         return;
     }
     for (int i = 0; i < NPROC; i++) strcpy(proc_slot(i)->cwd, "/");     // old folders are gone
-    console_puts("myfs.img formatted with MyFS v2. ");
+    console_puts(storage_name());
+    console_puts(" formatted with MyFS v2. ");
     print_dec(myfs_free_kb());
     console_puts(" KB free\n");
 }
@@ -1466,6 +1728,8 @@ static void shell_loop(void) {
             cmd_fsck(arg);
         } else if (command(line, "fsupgrade")) {
             cmd_fsupgrade();
+        } else if ((arg = command(line, "fsexpand"))) {
+            cmd_fsexpand(arg);
         } else if (command(line, "df") || command(line, "df -h")) {
             cmd_df();
         } else if ((arg = command(line, "cat"))) {

@@ -46,6 +46,11 @@ typedef struct {
 
 int myfs_mount(const myfs_dev_t *dev);
 int myfs_format(const myfs_dev_t *dev);         // a new, empty v2 file system
+// a v2 volume needs 1 bit of RAM per sector; the built-in bitmap covers 4 GB.
+// For a bigger one (a whole SD card partition) hand over memory for `sectors`
+// bits before mounting/formatting it (at most 128 GB).
+void myfs_bitmap_memory(void *mem, uint32_t sectors);
+uint32_t myfs_bitmap_cap(void);                 // sectors the bitmap can cover now
 int myfs_mounted(void);
 int myfs_version(void);                         // 1, 2, or 0 = nothing mounted
 int myfs_count(void);                           // files on the whole volume
