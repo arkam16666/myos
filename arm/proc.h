@@ -27,6 +27,9 @@ typedef struct {
     uint64_t started;           // ticks
     uint64_t cpu_ticks;         // ticks it was running when the timer went off
     int waiting;                // in a system call that waits (keys, sleep): not really busy
+    int linux;                  // a Linux program (linux.c): Linux system calls, its own memory map
+    int parent;                 // Linux: pid of the program that waits for it (0 = the shell, -1 = nobody)
+    uint64_t tpidr;             // TPIDR_EL0: the thread pointer (Linux programs keep TLS there)
 } proc_t;
 
 void proc_init(void);
@@ -54,5 +57,16 @@ uint32_t proc_total_blocks(void);
 void proc_tick(void);                   // timer interrupt: charge the running process
 uint64_t proc_idle_ticks(void);         // ticks when only a waiting shell was running
 uint32_t proc_used_blocks(const proc_t *p);
+
+// for linux.c (Linux programs build their own memory map)
+#define PROC_BLOCK 0x200000UL           // the MMU maps programs in 2 MB blocks
+proc_t *proc_new(void);                 // a free slot with its own copy of the kernel's map; 0 = none
+void proc_start(proc_t *p, void (*fn)(void), int foreground);   // pid, then run fn on its kernel stack
+uint64_t proc_mem_alloc(int n);         // n zeroed blocks in a row: physical address (0 = no memory)
+void proc_mem_free(uint64_t addr, int n);
+uint64_t proc_user_desc(uint64_t addr); // MMU entry: the block at addr, read/write/execute for EL0
+void proc_flush_tlb(void);
+uint8_t *proc_kstack_top(proc_t *p);
+int proc_is_pool(uint64_t addr);        // is addr a block from the pool?
 
 #endif

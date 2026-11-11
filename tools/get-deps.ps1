@@ -32,6 +32,31 @@ foreach ($d in $deps) {
     if ($LASTEXITCODE) { throw "failed to get $($d.Path)" }
 }
 
+# Prebuilt Linux programs (static AArch64 ELF) that MyOS-ARM runs with its Linux
+# layer (arm/linux.c), taken from Alpine Linux packages. Each is checked against
+# its SHA-256 and becomes a package in arm\build.ps1 (ports\NAME\NAME.info).
+$bins = @(
+    @{ Path = 'third_party/busybox/busybox'; Member = 'bin/busybox.static'
+       Url = 'https://dl-cdn.alpinelinux.org/alpine/v3.20/main/aarch64/busybox-static-1.36.1-r31.apk'
+       Sha256 = '1d8e7a7fc2ed69bdb8eb7be9d962489c21a0f75b72d8a325437c8a09d4cfac70' }  # BusyBox 1.36.1 (GPL-2.0)
+)
+foreach ($b in $bins) {
+    if (Test-Path $b.Path) {
+        Write-Host "$($b.Path): already there"
+        continue
+    }
+    Write-Host "$($b.Path): downloading..."
+    $dir = Split-Path $b.Path
+    New-Item -ItemType Directory -Force "$dir/apk" | Out-Null
+    $apk = "$dir/apk/$(Split-Path $b.Url -Leaf)"
+    Invoke-WebRequest $b.Url -OutFile $apk -UseBasicParsing
+    if ((Get-FileHash $apk -Algorithm SHA256).Hash -ne $b.Sha256.ToUpper()) { throw "${apk}: wrong SHA-256" }
+    tar -xzf $apk -C "$dir/apk" $b.Member 2>$null     # an .apk is a gzip'd tar (several streams)
+    if (-not (Test-Path "$dir/apk/$($b.Member)")) { throw "failed to unpack $apk" }
+    Move-Item "$dir/apk/$($b.Member)" $b.Path
+    Remove-Item -Recurse -Force "$dir/apk"
+}
+
 # Raspberry Pi firmware, only needed for USB boot (arm\usbboot.ps1)
 $fw = 'https://github.com/raspberrypi/firmware/raw/stable/boot'
 foreach ($f in 'bootcode.bin', 'start.elf', 'fixup.dat', 'start_cd.elf', 'fixup_cd.dat', 'LICENCE.broadcom') {

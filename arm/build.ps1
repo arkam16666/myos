@@ -35,7 +35,7 @@ if ($Pi4) { $flags += '-DPI4' }
 $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadcom/gen/interrupt_handlers.c",
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
             'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'fat.c', 'myfs.c',
-            'user.c', 'proc.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c')
+            'user.c', 'proc.c', 'linux.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c')
 $usb    = @('usb.c', 'net.c', 'remote.c', 'ssh.c', 'rng.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",
@@ -116,6 +116,27 @@ foreach ($name in $ports.Keys) {
     $ErrorActionPreference = 'Stop'
     if ($LASTEXITCODE) { throw "$name failed for ARM" }
     python ../tools/mkpkg.py "build/ports/$name" "../ports/$name/$name.info" "build/packages/$name.pkg"
+}
+
+# Linux programs (arm/linux.c runs static AArch64 ELF files):
+#  - tests\linux\*.c: tiny test programs with raw system calls -> build\linux\NAME
+#    (lxtest is also built as a static PIE: build\linux\lxpie)
+#  - prebuilt ones from tools\get-deps.ps1 (third_party\busybox ...) -> build\packages\NAME.pkg
+New-Item -ItemType Directory -Force build/linux | Out-Null
+$lxflags = @('--target=aarch64-linux-gnu', '-ffreestanding', '-fno-builtin', '-nostdlib', '-O2',
+             '-fuse-ld=lld', '-Wno-unused-command-line-argument')
+$ErrorActionPreference = 'Continue'
+foreach ($t in Get-ChildItem ../tests/linux -Filter *.c) {
+    & $clang @lxflags '-static' '-Wl,--image-base=0x400000' "../tests/linux/$($t.Name)" -o "build/linux/$($t.BaseName)" 2>&1 |
+        ForEach-Object { "$_" } | Where-Object { $_ -match 'error' } | ForEach-Object { Write-Host "  $_" }
+    if ($LASTEXITCODE) { $ErrorActionPreference = 'Stop'; throw "$($t.Name) failed (Linux test program)" }
+}
+& $clang @lxflags '-static-pie' '-fPIE' ../tests/linux/lxtest.c -o build/linux/lxpie 2>&1 | Out-Null
+$ErrorActionPreference = 'Stop'
+foreach ($name in @('busybox')) {
+    $bin = "../third_party/$name/$name"
+    if (-not (Test-Path $bin)) { Write-Host "  skipping $name (missing: run tools\get-deps.ps1)"; continue }
+    python ../tools/mkpkg.py $bin "../ports/$name/$name.info" "build/packages/$name.pkg"
 }
 
 # MicroPython for the Pi (python\ built with ARCH=arm64) -> build\packages\python.pkg

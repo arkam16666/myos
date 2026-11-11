@@ -99,6 +99,8 @@ el0_irq:                        // interrupt while a program runs: maybe its tim
     SAVE_FRAME
     bl   handle_irq
     bl   proc_irq_return        // may switch to another process (proc.c)
+    mov  x0, sp
+    bl   linux_irq_return       // a Linux program: run a signal handler? (linux.c)
     RESTORE_FRAME
 
 el0_sync:
@@ -257,3 +259,13 @@ return_to_kernel:
     mov  x0, x1
     msr  daifclr, #2            // interrupts on again
     ret
+
+// void user_resume(trapframe_t *frame)
+// Continue a program from a trap frame that lies at the top of this kernel
+// stack (linux.c: the child of fork starts like this, with its parent's
+// registers).
+.global user_resume
+user_resume:
+    msr  daifset, #2
+    mov  sp, x0
+    RESTORE_FRAME

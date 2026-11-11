@@ -11,6 +11,7 @@
 #include "console.h"
 #include "fat.h"
 #include "led.h"
+#include "linux.h"
 #include "myfs.h"
 #include "pkg.h"
 #include "print.h"
@@ -224,7 +225,10 @@ static void cmd_help(void) {
                  "  update    receive a new MyOS from the PC (arm\\update-pi.ps1)\n"
                  "  recv F    receive file F from the PC (arm\\push-pi.ps1)\n"
                  "  reboot    restart the Pi\n"
-                 "Programs run by typing their name. More in 'pkg list'.\n");
+                 "  strace P  run Linux program P showing its system calls\n"
+                 "Programs run by typing their name. More in 'pkg list'.\n"
+                 "Linux programs (static ARM64 ELF, e.g. 'pkg install busybox') run too;\n"
+                 "BusyBox commands work by name: vi, grep, sed, awk, sh ...\n");
 }
 
 static void cmd_info(void) {
@@ -606,7 +610,8 @@ static void report_job_end(proc_t *p) {
 static void report_finished_jobs(void) {
     for (int i = 1; i < NPROC; i++) {
         proc_t *p = proc_slot(i);
-        if (p->state == P_ZOMBIE && p->tty == console_tty()) {     // only this terminal's jobs
+        if (p->state == P_ZOMBIE && p->tty == console_tty() && !p->parent) {  // this terminal's jobs
+                                                                    // (a Linux parent waits for its own)
             if (!console_at_line_start()) console_putc('\n');
             report_job_end(p);
             proc_reap(p);
@@ -872,6 +877,8 @@ static void shell_loop(void) {
             cmd_recv(arg);
         } else if (command(line, "reboot")) {
             cmd_reboot();
+        } else if (myfs_mounted() && linux_command(line, background)) {
+            // strace PROGRAM ...: a Linux program with its system calls shown
         } else {
             // not built in: a program on the disk?
             char name[MYFS_NAME_MAX + 1];
@@ -888,6 +895,8 @@ static void shell_loop(void) {
                     if (run_program("python", pyargs, background) < 0) {
                         console_puts("This is a Python app: install python first (pkg install python).\n");
                     }
+                } else if (myfs_mounted() && linux_applet(name)) {    // "vi" = "busybox vi"
+                    linux_run("busybox", name, args ? args : "", background);
                 } else {
                     console_puts("Unknown command. Type 'help'.\n");
                 }

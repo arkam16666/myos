@@ -1,0 +1,5 @@
+// BusyBox 1.36.1 for 64-bit ARM Linux, from Alpine Linux (busybox-static, GPL-2.0),
+// fetched by tools/get-deps.ps1 into third_party/busybox. MyOS runs it as a Linux
+// program (arm/linux.c) - read by tools/mkpkg.py
+// @version 1.36.1
+// @description BusyBox: ls grep sed awk vi sh and 300 more

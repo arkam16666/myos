@@ -14,6 +14,7 @@
 #include <string.h>
 #include "broadcom/caches.h"
 #include "console.h"
+#include "linux.h"
 #include "myfs.h"
 #include "proc.h"
 #include "timer.h"
@@ -85,6 +86,7 @@ uint64_t proc_idle_ticks(void) { return idle_ticks; }
 uint32_t proc_used_blocks(const proc_t *p) {
     uint32_t n = p->code_block >= 0;
     for (int i = 0; i < 16; i++) n += p->heap[i] >= 0;
+    if (p->linux) n += linux_used_blocks(p);
     return n;
 }
 
@@ -120,6 +122,8 @@ int proc_foreground(void) { return tty_fg[cur->tty]; }
 void proc_set_foreground(int pid) { tty_fg[cur->tty] = pid; }
 
 int proc_interrupt(int tty) {
+    proc_t *fg = tty_fg[tty] ? proc_by_pid(tty_fg[tty]) : 0;
+    if (fg && fg->linux) return linux_interrupt(tty, fg);   // Linux: maybe the program wants ^C
     return tty_fg[tty] && proc_kill(tty_fg[tty]) == 0;
 }
 
@@ -144,6 +148,8 @@ static void switch_to(proc_t *next) {
     proc_t *prev = cur;
     fp_save(prev->fp);                  // each program has its own floating-point registers
     fp_restore(next->fp);
+    __asm__ volatile ("mrs %0, tpidr_el0" : "=r"(prev->tpidr));   // thread pointer (Linux TLS)
+    __asm__ volatile ("msr tpidr_el0, %0" :: "r"(next->tpidr));
     cur = next;
     uint64_t ttbr = next->kernel ? kernel_ttbr0
                                     : (uint64_t)next->l1 | (kernel_ttbr0 & 0xFFF);
@@ -179,6 +185,7 @@ void proc_user_return(void) {
 }
 
 static void free_memory(proc_t *p) {
+    if (p->linux) linux_free(p);
     if (p->code_block >= 0) pool_used[p->code_block] = 0;
     p->code_block = -1;
     for (int i = 0; i < 16; i++) {
@@ -188,10 +195,11 @@ static void free_memory(proc_t *p) {
 }
 
 void proc_exit(int64_t code) {
+    if (cur->linux) linux_exit(cur);    // (still on its own map: save files, close pipes)
     __asm__ volatile ("msr daifset, #2");
     cur->exit_code = code;
     // a shell thread, or a program whose terminal is gone: nobody will ask
-    cur->state = (cur->kernel || !tty_alive[cur->tty]) ? P_FREE : P_ZOMBIE;
+    cur->state = (cur->kernel || !tty_alive[cur->tty] || cur->parent < 0) ? P_FREE : P_ZOMBIE;
     // back on the kernel's tables before giving our blocks away
     __asm__ volatile ("dsb ish; msr ttbr0_el1, %0; isb" :: "r"(kernel_ttbr0) : "memory");
     flush_tlb();
@@ -365,6 +373,7 @@ static int map_heap(int i) {
 }
 
 int proc_handle_fault(uint64_t addr, uint64_t esr) {
+    if (cur->linux) return linux_fault(addr, esr);
     uint32_t fsc = (uint32_t)(esr & 0x3F);
     if (fsc < 0x04 || fsc > 0x07) return 0;             // only "nothing mapped here"
     if (addr < USER_HEAP || addr >= USER_HEAP_END) return 0;
@@ -379,3 +388,75 @@ int proc_user_ensure(uint64_t addr, uint64_t len) {
     }
     return 1;
 }
+
+// ---------------------------------------------------------------
+//  for linux.c: Linux programs lay out their own memory
+// ---------------------------------------------------------------
+proc_t *proc_new(void) {
+    proc_t *p = 0;
+    for (int i = 1; i < NPROC && !p; i++) {
+        if (procs[i].state == P_FREE) {
+            p = &procs[i];
+            memset(p, 0, sizeof *p);
+            p->slot = i;
+        }
+    }
+    if (!p) return 0;
+    p->code_block = -1;
+    for (int i = 0; i < 16; i++) p->heap[i] = -1;
+    p->l1 = l1_tables[p->slot];
+    p->l2 = l2_tables[p->slot];
+    memcpy(p->l1, level_1_table, sizeof l1_tables[0]);
+    memcpy(p->l2, level_2_0x0_0000_0000_to_0x0_4000_0000, sizeof l2_tables[0]);
+    p->l1[0] = (level_1_table[0] & 0xFFF) | (uint64_t)p->l2;
+    p->tty = cur->tty;
+    return p;
+}
+
+void proc_start(proc_t *p, void (*fn)(void), int foreground) {
+    data_clean_and_invalidate(p->l1, 4096);
+    data_clean_and_invalidate(p->l2, 4096);
+    p->pid = next_pid++;
+    p->kernel = 0;
+    p->started = ticks;
+    memset(p->ctx, 0, sizeof p->ctx);
+    p->ctx[0] = (uint64_t)fn;                               // x19: proc_trampoline calls it
+    p->ctx[11] = (uint64_t)proc_trampoline;
+    p->ctx[12] = (uint64_t)(kstacks[p->slot] + KSTACK_SIZE);
+    p->ctx[13] = 0x3C0;
+    if (foreground) tty_fg[p->tty] = p->pid;
+    p->state = P_READY;
+}
+
+uint64_t proc_mem_alloc(int n) {
+    if (n < 1) return 0;
+    for (uint32_t i = 0; i + (uint32_t)n <= POOL_BLOCKS; i++) {
+        int k = 0;
+        while (k < n && !pool_used[i + k]) k++;
+        if (k < n) {
+            i += k;
+            continue;
+        }
+        for (k = 0; k < n; k++) pool_used[i + k] = 1;
+        memset((void *)block_addr((int)i), 0, (size_t)n * BLOCK);
+        return block_addr((int)i);
+    }
+    return 0;
+}
+
+void proc_mem_free(uint64_t addr, int n) {
+    if (!proc_is_pool(addr)) return;
+    for (int k = 0; k < n; k++) pool_used[(addr - POOL_START) / BLOCK + k] = 0;
+}
+
+int proc_is_pool(uint64_t addr) {
+    return addr >= POOL_START && addr < POOL_START + POOL_BLOCKS * BLOCK;
+}
+
+uint64_t proc_user_desc(uint64_t addr) {
+    return ((mem_attrs | DESC_AP_EL0_RW | DESC_PXN) & ~DESC_UXN) | (addr & DESC_ADDR_MASK);
+}
+
+void proc_flush_tlb(void) { flush_tlb(); }
+
+uint8_t *proc_kstack_top(proc_t *p) { return kstacks[p->slot] + KSTACK_SIZE; }

@@ -11,6 +11,7 @@
 #include "broadcom/caches.h"
 #include "console.h"
 #include "led.h"
+#include "linux.h"
 #include "myfs.h"
 #include "print.h"
 #include "proc.h"
@@ -63,6 +64,7 @@ int program_header_arch(const uint8_t *data, uint32_t size) {
 //  running a program
 // ---------------------------------------------------------------
 int run_program(const char *name, const char *args, int background) {
+    if (linux_is_elf(name)) return linux_run(name, name, args, background);    // a Linux program
     int pid = proc_spawn(name, args, background);
     if (pid == -1) return -1;                       // no such file
     if (pid < 0) return 0;                          // (proc_spawn said why)
@@ -282,12 +284,14 @@ void user_sync(trapframe_t *f) {
     uint32_t ec = (uint32_t)(esr >> 26);
     if (ec == 0x15) {                               // svc #0
         __asm__ volatile ("msr daifclr, #2");       // USB and the timer keep working
-        f->x[0] = (uint64_t)syscall(f->x[8], f->x[0], f->x[1], f->x[2]);
+        if (proc_current()->linux) linux_syscall(f);    // Linux system call numbers (linux.c)
+        else f->x[0] = (uint64_t)syscall(f->x[8], f->x[0], f->x[1], f->x[2]);
         __asm__ volatile ("msr daifset, #2");       // vectors.S restores with IRQs off
         return;
     }
     uint64_t far = read_far();
     if (ec == 0x24 && proc_handle_fault(far, esr)) return;     // first touch of a heap block
+    if (ec == 0x20 && proc_current()->linux && proc_handle_fault(far, esr)) return;
     if (!console_at_line_start()) console_putc('\n');
     console_puts("Program crashed: ");
     console_puts(exception_name(ec));

@@ -9,6 +9,7 @@
 //   104 u32 content size.
 //   kind 1 = a program ("MYEX" ...)      -> installed as file NAME
 //   kind 2 = a Python app (.py source)   -> installed as NAME.py, needs 'python'
+//   kind 3 = a Linux program (static AArch64 ELF, linux.c) -> installed as file NAME
 // Files the package manager keeps in MyFS:
 //   pkg.idx  the repository list from 'pkg update'
 //            one line per package: name version kind size sha256 description
@@ -31,8 +32,9 @@
 #define P_SIZE    104
 #define KIND_PROGRAM 1
 #define KIND_PYTHON  2
+#define KIND_LINUX   3
 #define PKG_BUF   ((uint8_t *)0x01000000)   // free RAM while installing
-#define PKG_MAX   (USER_MAX_SIZE + HDR_SIZE)
+#define PKG_MAX   (0x00800000 - 0x1000)     // (up to IDX_BUF; Linux programs can be big)
 #define IDX_BUF   ((char *)0x01800000)      // the repository list while working on it
 #define IDX_MAX   (64 * 1024)
 #define IDX_FILE  "pkg.idx"
@@ -185,7 +187,8 @@ static int idx_entry(int i, entry_t *e) {
         const char *q = word(line, e->name, sizeof e->name);
         q = word(q, e->version, sizeof e->version);
         q = word(q, num, sizeof num);
-        e->kind = num[0] == 'p' ? KIND_PYTHON : KIND_PROGRAM;     // "py" or "app"
+        e->kind = num[0] == 'p' ? KIND_PYTHON : num[0] == 'l' ? KIND_LINUX : KIND_PROGRAM;
+                                                                // "py", "linux" or "app"
         q = word(q, num, sizeof num);
         e->size = 0;
         for (char *d = num; *d >= '0' && *d <= '9'; d++) e->size = e->size * 10 + (uint32_t)(*d - '0');
@@ -326,7 +329,7 @@ static void pkg_search(const char *w) {
         pad_to(14, (int)strlen(e.name));
         console_puts(e.version);
         pad_to(9, (int)strlen(e.version));
-        console_puts(e.kind == KIND_PYTHON ? "python  " : "program ");
+        console_puts(e.kind == KIND_PYTHON ? "python  " : e.kind == KIND_LINUX ? "linux   " : "program ");
         console_puts(e.desc);
         console_putc('\n');
     }
@@ -367,7 +370,8 @@ static void pkg_info(const char *name) {
     console_puts("\nVersion:     ");
     console_puts(version);
     console_puts("\nType:        ");
-    console_puts(kind == KIND_PYTHON ? "Python app (needs python)" : "program");
+    console_puts(kind == KIND_PYTHON ? "Python app (needs python)"
+                 : kind == KIND_LINUX ? "Linux program (static ARM64 ELF)" : "program");
     console_puts("\nDescription: ");
     console_puts(desc);
     console_puts("\nSize:        ");
@@ -401,7 +405,7 @@ static int install_buffer(uint32_t total, int depth) {
         return 0;
     }
     uint32_t kind = rd32(PKG_BUF + P_KIND), size = rd32(PKG_BUF + P_SIZE);
-    if (size + HDR_SIZE > total || (kind != KIND_PROGRAM && kind != KIND_PYTHON)) {
+    if (size + HDR_SIZE > total || (kind != KIND_PROGRAM && kind != KIND_PYTHON && kind != KIND_LINUX)) {
         console_puts(bad);
         return 0;
     }
@@ -422,6 +426,13 @@ static int install_buffer(uint32_t total, int depth) {
         }
         if (arch != MYEX_ARCH_ARM64) {
             console_puts(bad);
+            return 0;
+        }
+        strcpy(file, prog);
+    } else if (kind == KIND_LINUX) {
+        const uint8_t *elf = PKG_BUF + HDR_SIZE;        // ELF64, little endian, machine 183 = AArch64
+        if (size < 64 || memcmp(elf, "\177ELF", 4) != 0 || elf[4] != 2 || elf[5] != 1 || elf[18] != 183) {
+            console_puts("That package is not a 64-bit ARM Linux program.\n");
             return 0;
         }
         strcpy(file, prog);

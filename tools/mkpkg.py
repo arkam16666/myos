@@ -2,6 +2,7 @@
 """mkpkg - wrap a MyOS program or Python app into a .pkg package.
 
 usage: python tools/mkpkg.py <program> <source> <out.pkg>
+       python tools/mkpkg.py <linux-elf> <info file> <out.pkg>  (Linux program)
        python tools/mkpkg.py <app.py> <app.py> <out.pkg>      (Python app)
 
 The package name is the source file name; the rest comes from
@@ -11,7 +12,8 @@ comment lines in the source (';', '//' or '#'):
 
 Package layout (must match kernel.asm and arm/pkg.c):
   0   "MYPK"
-  4   u32 kind: 1 = program ("MYEX" ...), 2 = Python app (.py source)
+  4   u32 kind: 1 = program ("MYEX" ...), 2 = Python app (.py source),
+              3 = Linux program (static AArch64 ELF file, run by arm/linux.c)
   8   name[16]           zero-terminated
   24  version[16]
   40  description[64]
@@ -25,7 +27,7 @@ import sys
 
 HEADER = struct.Struct("<4sI16s16s64sI")
 HEADER_SIZE = 128
-KIND_PROGRAM, KIND_PYTHON = 1, 2
+KIND_PROGRAM, KIND_PYTHON, KIND_LINUX = 1, 2, 3
 
 
 def read_meta(src_path):
@@ -48,8 +50,12 @@ def make_package(prog_path, src_path):
         compile(content, prog_path, "exec")         # catch syntax errors now
     elif content[:4] == b"MYEX":
         kind = KIND_PROGRAM
+    elif content[:4] == b"\x7fELF":
+        if content[4] != 2 or content[5] != 1 or content[18] != 183:
+            sys.exit(f"{prog_path} is an ELF file, but not for 64-bit ARM (AArch64) Linux")
+        kind = KIND_LINUX
     else:
-        sys.exit(f"{prog_path} is not a MyOS program (no MYEX header) or a .py file")
+        sys.exit(f"{prog_path} is not a MyOS program (no MYEX header), a Linux ELF or a .py file")
     meta = read_meta(src_path)
     name = os.path.splitext(os.path.basename(src_path))[0]
     if not re.fullmatch(r"[a-z0-9_-]{1,15}", name):
