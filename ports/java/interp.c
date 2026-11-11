@@ -660,6 +660,47 @@ int interp(int base) {
     int len;
 
 #define SYNC() (fr->pc = pc + 1, fr->sp = sp)
+    uint8_t op;
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(JVM_NO_CGOTO)
+    /* the simple handlers jump straight to the next one */
+    static void *const dispatch[256] = {
+        &&op_00, &&op_01, &&op_02, &&op_03, &&op_04, &&op_05, &&op_06, &&op_07,
+        &&op_08, &&op_09, &&op_0a, &&op_0b, &&op_0c, &&op_0d, &&op_0e, &&op_0f,
+        &&op_10, &&op_11, &&op_12, &&op_13, &&op_14, &&op_15, &&op_16, &&op_17,
+        &&op_18, &&op_19, &&op_1a, &&op_1b, &&op_1c, &&op_1d, &&op_1e, &&op_1f,
+        &&op_20, &&op_21, &&op_22, &&op_23, &&op_24, &&op_25, &&op_26, &&op_27,
+        &&op_28, &&op_29, &&op_2a, &&op_2b, &&op_2c, &&op_2d, &&op_2e, &&op_2f,
+        &&op_30, &&op_31, &&op_32, &&op_33, &&op_34, &&op_35, &&op_36, &&op_37,
+        &&op_38, &&op_39, &&op_3a, &&op_3b, &&op_3c, &&op_3d, &&op_3e, &&op_3f,
+        &&op_40, &&op_41, &&op_42, &&op_43, &&op_44, &&op_45, &&op_46, &&op_47,
+        &&op_48, &&op_49, &&op_4a, &&op_4b, &&op_4c, &&op_4d, &&op_4e, &&op_4f,
+        &&op_50, &&op_51, &&op_52, &&op_53, &&op_54, &&op_55, &&op_56, &&op_57,
+        &&op_58, &&op_59, &&op_5a, &&op_5b, &&op_5c, &&op_5d, &&op_5e, &&op_5f,
+        &&op_60, &&op_61, &&op_62, &&op_63, &&op_64, &&op_65, &&op_66, &&op_67,
+        &&op_68, &&op_69, &&op_6a, &&op_6b, &&op_6c, &&op_6d, &&op_6e, &&op_6f,
+        &&op_70, &&op_71, &&op_72, &&op_73, &&op_74, &&op_75, &&op_76, &&op_77,
+        &&op_78, &&op_79, &&op_7a, &&op_7b, &&op_7c, &&op_7d, &&op_7e, &&op_7f,
+        &&op_80, &&op_81, &&op_82, &&op_83, &&op_84, &&op_85, &&op_86, &&op_87,
+        &&op_88, &&op_89, &&op_8a, &&op_8b, &&op_8c, &&op_8d, &&op_8e, &&op_8f,
+        &&op_90, &&op_91, &&op_92, &&op_93, &&op_94, &&op_95, &&op_96, &&op_97,
+        &&op_98, &&op_99, &&op_9a, &&op_9b, &&op_9c, &&op_9d, &&op_9e, &&op_9f,
+        &&op_a0, &&op_a1, &&op_a2, &&op_a3, &&op_a4, &&op_a5, &&op_a6, &&op_a7,
+        &&op_a8, &&op_a9, &&op_aa, &&op_ab, &&op_ac, &&op_ad, &&op_ae, &&op_af,
+        &&op_b0, &&op_b1, &&op_b2, &&op_b3, &&op_b4, &&op_b5, &&op_b6, &&op_b7,
+        &&op_b8, &&op_b9, &&op_ba, &&op_bb, &&op_bc, &&op_bd, &&op_be, &&op_bf,
+        &&op_c0, &&op_c1, &&op_c2, &&op_c3, &&op_c4, &&op_c5, &&op_c6, &&op_c7,
+        &&op_c8, &&op_c9, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default,
+        &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default,
+        &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default,
+        &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default,
+        &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default,
+        &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default,
+        &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default, &&op_default,
+    };
+#define NEXT do { op = *pc; goto *dispatch[op]; } while (0)
+#else
+#define NEXT break
+#endif
 #define THROW() goto handle_exception
 #define NULLCHK(o, what) do { if (!(o)) { SYNC(); npe_msg(what, NULL, 0); THROW(); } } while (0)
 
@@ -672,18 +713,18 @@ reload:
     cls = m->cls;
 
     for (;;) {
-        uint8_t op = *pc;
+        op = *pc;
         switch (op) {
-        case 0x00: pc++; break;
-        case 0x01: (sp++)->l = NULL; pc++; break;
-        case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: case 0x07: case 0x08:
-            (sp++)->i = op - 3; pc++; break;
-        case 0x09: case 0x0a: sp->j = op - 9; sp += 2; pc++; break;
-        case 0x0b: case 0x0c: case 0x0d: (sp++)->f = (jfloat)(op - 0x0b); pc++; break;
-        case 0x0e: case 0x0f: sp->d = op - 0x0e; sp += 2; pc++; break;
-        case 0x10: (sp++)->i = (int8_t)pc[1]; pc += 2; break;
-        case 0x11: (sp++)->i = S2(pc + 1); pc += 3; break;
-        case 0x12: case 0x13: {
+        case 0x00: op_00: pc++; NEXT;
+        case 0x01: op_01: (sp++)->l = NULL; pc++; NEXT;
+        case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: case 0x07: case 0x08: op_02: op_03: op_04: op_05: op_06: op_07: op_08:
+            (sp++)->i = op - 3; pc++; NEXT;
+        case 0x09: case 0x0a: op_09: op_0a: sp->j = op - 9; sp += 2; pc++; NEXT;
+        case 0x0b: case 0x0c: case 0x0d: op_0b: op_0c: op_0d: (sp++)->f = (jfloat)(op - 0x0b); pc++; NEXT;
+        case 0x0e: case 0x0f: op_0e: op_0f: sp->d = op - 0x0e; sp += 2; pc++; NEXT;
+        case 0x10: op_10: (sp++)->i = (int8_t)pc[1]; pc += 2; NEXT;
+        case 0x11: op_11: (sp++)->i = S2(pc + 1); pc += 3; NEXT;
+        case 0x12: case 0x13: op_12: op_13: {
             int idx = op == 0x12 ? pc[1] : U2(pc + 1);
             switch (cls->cp_tag[idx]) {
                 case CP_INT: case CP_FLOAT: (sp++)->i = cls->cp[idx].i; break;
@@ -710,17 +751,17 @@ reload:
             pc += op == 0x12 ? 2 : 3;
             break;
         }
-        case 0x14: sp->j = cls->cp[U2(pc + 1)].j; sp += 2; pc += 3; break;
-        case 0x15: case 0x17: case 0x19: *sp++ = locals[pc[1]]; pc += 2; break;
-        case 0x16: case 0x18: sp[0] = locals[pc[1]]; sp[1].u = 0; sp += 2; pc += 2; break;
-        case 0x1a: case 0x1b: case 0x1c: case 0x1d: *sp++ = locals[op - 0x1a]; pc++; break;
-        case 0x1e: case 0x1f: case 0x20: case 0x21: sp[0] = locals[op - 0x1e]; sp[1].u = 0; sp += 2; pc++; break;
-        case 0x22: case 0x23: case 0x24: case 0x25: *sp++ = locals[op - 0x22]; pc++; break;
-        case 0x26: case 0x27: case 0x28: case 0x29: sp[0] = locals[op - 0x26]; sp[1].u = 0; sp += 2; pc++; break;
-        case 0x2a: case 0x2b: case 0x2c: case 0x2d: *sp++ = locals[op - 0x2a]; pc++; break;
+        case 0x14: op_14: sp->j = cls->cp[U2(pc + 1)].j; sp += 2; pc += 3; NEXT;
+        case 0x15: case 0x17: case 0x19: op_15: op_17: op_19: *sp++ = locals[pc[1]]; pc += 2; NEXT;
+        case 0x16: case 0x18: op_16: op_18: sp[0] = locals[pc[1]]; sp[1].u = 0; sp += 2; pc += 2; NEXT;
+        case 0x1a: case 0x1b: case 0x1c: case 0x1d: op_1a: op_1b: op_1c: op_1d: *sp++ = locals[op - 0x1a]; pc++; NEXT;
+        case 0x1e: case 0x1f: case 0x20: case 0x21: op_1e: op_1f: op_20: op_21: sp[0] = locals[op - 0x1e]; sp[1].u = 0; sp += 2; pc++; NEXT;
+        case 0x22: case 0x23: case 0x24: case 0x25: op_22: op_23: op_24: op_25: *sp++ = locals[op - 0x22]; pc++; NEXT;
+        case 0x26: case 0x27: case 0x28: case 0x29: op_26: op_27: op_28: op_29: sp[0] = locals[op - 0x26]; sp[1].u = 0; sp += 2; pc++; NEXT;
+        case 0x2a: case 0x2b: case 0x2c: case 0x2d: op_2a: op_2b: op_2c: op_2d: *sp++ = locals[op - 0x2a]; pc++; NEXT;
 
         /* array loads */
-        case 0x2e: case 0x2f: case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: {
+        case 0x2e: case 0x2f: case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: op_2e: op_2f: op_30: op_31: op_32: op_33: op_34: op_35: {
             jint i = sp[-1].i;
             Object *a = sp[-2].l;
             if (!a) {
@@ -742,18 +783,18 @@ reload:
                 case 0x35: (sp++)->i = ADATA(a, jshort)[i]; break;
             }
             pc++;
-            break;
+            NEXT;
         }
-        case 0x36: case 0x38: case 0x3a: locals[pc[1]] = *--sp; pc += 2; break;
-        case 0x37: case 0x39: sp -= 2; locals[pc[1]] = sp[0]; locals[pc[1] + 1].u = 0; pc += 2; break;
-        case 0x3b: case 0x3c: case 0x3d: case 0x3e: locals[op - 0x3b] = *--sp; pc++; break;
-        case 0x3f: case 0x40: case 0x41: case 0x42: sp -= 2; locals[op - 0x3f] = sp[0]; pc++; break;
-        case 0x43: case 0x44: case 0x45: case 0x46: locals[op - 0x43] = *--sp; pc++; break;
-        case 0x47: case 0x48: case 0x49: case 0x4a: sp -= 2; locals[op - 0x47] = sp[0]; pc++; break;
-        case 0x4b: case 0x4c: case 0x4d: case 0x4e: locals[op - 0x4b] = *--sp; pc++; break;
+        case 0x36: case 0x38: case 0x3a: op_36: op_38: op_3a: locals[pc[1]] = *--sp; pc += 2; NEXT;
+        case 0x37: case 0x39: op_37: op_39: sp -= 2; locals[pc[1]] = sp[0]; locals[pc[1] + 1].u = 0; pc += 2; NEXT;
+        case 0x3b: case 0x3c: case 0x3d: case 0x3e: op_3b: op_3c: op_3d: op_3e: locals[op - 0x3b] = *--sp; pc++; NEXT;
+        case 0x3f: case 0x40: case 0x41: case 0x42: op_3f: op_40: op_41: op_42: sp -= 2; locals[op - 0x3f] = sp[0]; pc++; NEXT;
+        case 0x43: case 0x44: case 0x45: case 0x46: op_43: op_44: op_45: op_46: locals[op - 0x43] = *--sp; pc++; NEXT;
+        case 0x47: case 0x48: case 0x49: case 0x4a: op_47: op_48: op_49: op_4a: sp -= 2; locals[op - 0x47] = sp[0]; pc++; NEXT;
+        case 0x4b: case 0x4c: case 0x4d: case 0x4e: op_4b: op_4c: op_4d: op_4e: locals[op - 0x4b] = *--sp; pc++; NEXT;
 
         /* array stores */
-        case 0x4f: case 0x50: case 0x51: case 0x52: case 0x53: case 0x54: case 0x55: case 0x56: {
+        case 0x4f: case 0x50: case 0x51: case 0x52: case 0x53: case 0x54: case 0x55: case 0x56: op_4f: op_50: op_51: op_52: op_53: op_54: op_55: op_56: {
             int wide = op == 0x50 || op == 0x52;
             Slot v = sp[-1 - wide];
             jint i = sp[-2 - wide].i;
@@ -788,101 +829,101 @@ reload:
             }
             sp -= 3 + wide;
             pc++;
-            break;
+            NEXT;
         }
 
         /* stack */
-        case 0x57: sp--; pc++; break;
-        case 0x58: sp -= 2; pc++; break;
-        case 0x59: sp[0] = sp[-1]; sp++; pc++; break;
-        case 0x5a: { Slot a = sp[-1], b = sp[-2]; sp[-2] = a; sp[-1] = b; sp[0] = a; sp++; pc++; break; }
-        case 0x5b: { Slot a = sp[-1], b = sp[-2], c = sp[-3];
+        case 0x57: op_57: sp--; pc++; NEXT;
+        case 0x58: op_58: sp -= 2; pc++; NEXT;
+        case 0x59: op_59: sp[0] = sp[-1]; sp++; pc++; NEXT;
+        case 0x5a: op_5a: { Slot a = sp[-1], b = sp[-2]; sp[-2] = a; sp[-1] = b; sp[0] = a; sp++; pc++; break; }
+        case 0x5b: op_5b: { Slot a = sp[-1], b = sp[-2], c = sp[-3];
                      sp[-3] = a; sp[-2] = c; sp[-1] = b; sp[0] = a; sp++; pc++; break; }
-        case 0x5c: sp[0] = sp[-2]; sp[1] = sp[-1]; sp += 2; pc++; break;
-        case 0x5d: { Slot a = sp[-1], b = sp[-2], c = sp[-3];
+        case 0x5c: op_5c: sp[0] = sp[-2]; sp[1] = sp[-1]; sp += 2; pc++; NEXT;
+        case 0x5d: op_5d: { Slot a = sp[-1], b = sp[-2], c = sp[-3];
                      sp[-3] = b; sp[-2] = a; sp[-1] = c; sp[0] = b; sp[1] = a; sp += 2; pc++; break; }
-        case 0x5e: { Slot a = sp[-1], b = sp[-2], c = sp[-3], d = sp[-4];
+        case 0x5e: op_5e: { Slot a = sp[-1], b = sp[-2], c = sp[-3], d = sp[-4];
                      sp[-4] = b; sp[-3] = a; sp[-2] = d; sp[-1] = c; sp[0] = b; sp[1] = a; sp += 2; pc++; break; }
-        case 0x5f: { Slot a = sp[-1]; sp[-1] = sp[-2]; sp[-2] = a; pc++; break; }
+        case 0x5f: op_5f: { Slot a = sp[-1]; sp[-1] = sp[-2]; sp[-2] = a; pc++; break; }
 
         /* arithmetic */
-        case 0x60: sp[-2].i = (jint)((uint32_t)sp[-2].i + (uint32_t)sp[-1].i); sp--; pc++; break;
-        case 0x61: sp[-4].j = (jlong)((uint64_t)sp[-4].j + (uint64_t)sp[-2].j); sp -= 2; pc++; break;
-        case 0x62: sp[-2].f = sp[-2].f + sp[-1].f; sp--; pc++; break;
-        case 0x63: sp[-4].d = sp[-4].d + sp[-2].d; sp -= 2; pc++; break;
-        case 0x64: sp[-2].i = (jint)((uint32_t)sp[-2].i - (uint32_t)sp[-1].i); sp--; pc++; break;
-        case 0x65: sp[-4].j = (jlong)((uint64_t)sp[-4].j - (uint64_t)sp[-2].j); sp -= 2; pc++; break;
-        case 0x66: sp[-2].f = sp[-2].f - sp[-1].f; sp--; pc++; break;
-        case 0x67: sp[-4].d = sp[-4].d - sp[-2].d; sp -= 2; pc++; break;
-        case 0x68: sp[-2].i = (jint)((uint32_t)sp[-2].i * (uint32_t)sp[-1].i); sp--; pc++; break;
-        case 0x69: sp[-4].j = (jlong)((uint64_t)sp[-4].j * (uint64_t)sp[-2].j); sp -= 2; pc++; break;
-        case 0x6a: sp[-2].f = sp[-2].f * sp[-1].f; sp--; pc++; break;
-        case 0x6b: sp[-4].d = sp[-4].d * sp[-2].d; sp -= 2; pc++; break;
-        case 0x6c: case 0x70: {
+        case 0x60: op_60: sp[-2].i = (jint)((uint32_t)sp[-2].i + (uint32_t)sp[-1].i); sp--; pc++; NEXT;
+        case 0x61: op_61: sp[-4].j = (jlong)((uint64_t)sp[-4].j + (uint64_t)sp[-2].j); sp -= 2; pc++; NEXT;
+        case 0x62: op_62: sp[-2].f = sp[-2].f + sp[-1].f; sp--; pc++; NEXT;
+        case 0x63: op_63: sp[-4].d = sp[-4].d + sp[-2].d; sp -= 2; pc++; NEXT;
+        case 0x64: op_64: sp[-2].i = (jint)((uint32_t)sp[-2].i - (uint32_t)sp[-1].i); sp--; pc++; NEXT;
+        case 0x65: op_65: sp[-4].j = (jlong)((uint64_t)sp[-4].j - (uint64_t)sp[-2].j); sp -= 2; pc++; NEXT;
+        case 0x66: op_66: sp[-2].f = sp[-2].f - sp[-1].f; sp--; pc++; NEXT;
+        case 0x67: op_67: sp[-4].d = sp[-4].d - sp[-2].d; sp -= 2; pc++; NEXT;
+        case 0x68: op_68: sp[-2].i = (jint)((uint32_t)sp[-2].i * (uint32_t)sp[-1].i); sp--; pc++; NEXT;
+        case 0x69: op_69: sp[-4].j = (jlong)((uint64_t)sp[-4].j * (uint64_t)sp[-2].j); sp -= 2; pc++; NEXT;
+        case 0x6a: op_6a: sp[-2].f = sp[-2].f * sp[-1].f; sp--; pc++; NEXT;
+        case 0x6b: op_6b: sp[-4].d = sp[-4].d * sp[-2].d; sp -= 2; pc++; NEXT;
+        case 0x6c: case 0x70: op_6c: op_70: {
             jint b = sp[-1].i, a = sp[-2].i;
             if (b == 0) { SYNC(); throw_new("java/lang/ArithmeticException", "/ by zero"); THROW(); }
             if (b == -1) sp[-2].i = op == 0x6c ? (jint)(0u - (uint32_t)a) : 0;
             else sp[-2].i = op == 0x6c ? a / b : a % b;
             sp--; pc++;
-            break;
+            NEXT;
         }
-        case 0x6d: case 0x71: {
+        case 0x6d: case 0x71: op_6d: op_71: {
             jlong b = sp[-2].j, a = sp[-4].j;
             if (b == 0) { SYNC(); throw_new("java/lang/ArithmeticException", "/ by zero"); THROW(); }
             if (b == -1) sp[-4].j = op == 0x6d ? (jlong)(0ull - (uint64_t)a) : 0;
             else sp[-4].j = op == 0x6d ? a / b : a % b;
             sp -= 2; pc++;
-            break;
+            NEXT;
         }
-        case 0x6e: sp[-2].f = sp[-2].f / sp[-1].f; sp--; pc++; break;
-        case 0x6f: sp[-4].d = sp[-4].d / sp[-2].d; sp -= 2; pc++; break;
-        case 0x72: sp[-2].f = (jfloat)fmod(sp[-2].f, sp[-1].f); sp--; pc++; break;
-        case 0x73: sp[-4].d = fmod(sp[-4].d, sp[-2].d); sp -= 2; pc++; break;
-        case 0x74: sp[-1].i = (jint)(0u - (uint32_t)sp[-1].i); pc++; break;
-        case 0x75: sp[-2].j = (jlong)(0ull - (uint64_t)sp[-2].j); pc++; break;
-        case 0x76: sp[-1].f = -sp[-1].f; pc++; break;
-        case 0x77: sp[-2].d = -sp[-2].d; pc++; break;
-        case 0x78: sp[-2].i = (jint)((uint32_t)sp[-2].i << (sp[-1].i & 31)); sp--; pc++; break;
-        case 0x79: sp[-3].j = (jlong)((uint64_t)sp[-3].j << (sp[-1].i & 63)); sp--; pc++; break;
-        case 0x7a: sp[-2].i = sp[-2].i >> (sp[-1].i & 31); sp--; pc++; break;
-        case 0x7b: sp[-3].j = sp[-3].j >> (sp[-1].i & 63); sp--; pc++; break;
-        case 0x7c: sp[-2].i = (jint)((uint32_t)sp[-2].i >> (sp[-1].i & 31)); sp--; pc++; break;
-        case 0x7d: sp[-3].j = (jlong)((uint64_t)sp[-3].j >> (sp[-1].i & 63)); sp--; pc++; break;
-        case 0x7e: sp[-2].i &= sp[-1].i; sp--; pc++; break;
-        case 0x7f: sp[-4].j &= sp[-2].j; sp -= 2; pc++; break;
-        case 0x80: sp[-2].i |= sp[-1].i; sp--; pc++; break;
-        case 0x81: sp[-4].j |= sp[-2].j; sp -= 2; pc++; break;
-        case 0x82: sp[-2].i ^= sp[-1].i; sp--; pc++; break;
-        case 0x83: sp[-4].j ^= sp[-2].j; sp -= 2; pc++; break;
-        case 0x84: locals[pc[1]].i = (jint)((uint32_t)locals[pc[1]].i + (uint32_t)(int8_t)pc[2]); pc += 3; break;
+        case 0x6e: op_6e: sp[-2].f = sp[-2].f / sp[-1].f; sp--; pc++; NEXT;
+        case 0x6f: op_6f: sp[-4].d = sp[-4].d / sp[-2].d; sp -= 2; pc++; NEXT;
+        case 0x72: op_72: sp[-2].f = (jfloat)fmod(sp[-2].f, sp[-1].f); sp--; pc++; NEXT;
+        case 0x73: op_73: sp[-4].d = fmod(sp[-4].d, sp[-2].d); sp -= 2; pc++; NEXT;
+        case 0x74: op_74: sp[-1].i = (jint)(0u - (uint32_t)sp[-1].i); pc++; NEXT;
+        case 0x75: op_75: sp[-2].j = (jlong)(0ull - (uint64_t)sp[-2].j); pc++; NEXT;
+        case 0x76: op_76: sp[-1].f = -sp[-1].f; pc++; NEXT;
+        case 0x77: op_77: sp[-2].d = -sp[-2].d; pc++; NEXT;
+        case 0x78: op_78: sp[-2].i = (jint)((uint32_t)sp[-2].i << (sp[-1].i & 31)); sp--; pc++; NEXT;
+        case 0x79: op_79: sp[-3].j = (jlong)((uint64_t)sp[-3].j << (sp[-1].i & 63)); sp--; pc++; NEXT;
+        case 0x7a: op_7a: sp[-2].i = sp[-2].i >> (sp[-1].i & 31); sp--; pc++; NEXT;
+        case 0x7b: op_7b: sp[-3].j = sp[-3].j >> (sp[-1].i & 63); sp--; pc++; NEXT;
+        case 0x7c: op_7c: sp[-2].i = (jint)((uint32_t)sp[-2].i >> (sp[-1].i & 31)); sp--; pc++; NEXT;
+        case 0x7d: op_7d: sp[-3].j = (jlong)((uint64_t)sp[-3].j >> (sp[-1].i & 63)); sp--; pc++; NEXT;
+        case 0x7e: op_7e: sp[-2].i &= sp[-1].i; sp--; pc++; NEXT;
+        case 0x7f: op_7f: sp[-4].j &= sp[-2].j; sp -= 2; pc++; NEXT;
+        case 0x80: op_80: sp[-2].i |= sp[-1].i; sp--; pc++; NEXT;
+        case 0x81: op_81: sp[-4].j |= sp[-2].j; sp -= 2; pc++; NEXT;
+        case 0x82: op_82: sp[-2].i ^= sp[-1].i; sp--; pc++; NEXT;
+        case 0x83: op_83: sp[-4].j ^= sp[-2].j; sp -= 2; pc++; NEXT;
+        case 0x84: op_84: locals[pc[1]].i = (jint)((uint32_t)locals[pc[1]].i + (uint32_t)(int8_t)pc[2]); pc += 3; NEXT;
 
         /* conversions */
-        case 0x85: sp[-1].j = sp[-1].i; sp[0].u = 0; sp++; pc++; break;
-        case 0x86: sp[-1].f = (jfloat)sp[-1].i; pc++; break;
-        case 0x87: sp[-1].d = (jdouble)sp[-1].i; sp[0].u = 0; sp++; pc++; break;
-        case 0x88: sp[-2].i = (jint)sp[-2].j; sp--; pc++; break;
-        case 0x89: sp[-2].f = (jfloat)sp[-2].j; sp--; pc++; break;
-        case 0x8a: sp[-2].d = (jdouble)sp[-2].j; pc++; break;
-        case 0x8b: sp[-1].i = d2i(sp[-1].f); pc++; break;
-        case 0x8c: sp[-1].j = d2l(sp[-1].f); sp[0].u = 0; sp++; pc++; break;
-        case 0x8d: sp[-1].d = sp[-1].f; sp[0].u = 0; sp++; pc++; break;
-        case 0x8e: sp[-2].i = d2i(sp[-2].d); sp--; pc++; break;
-        case 0x8f: sp[-2].j = d2l(sp[-2].d); pc++; break;
-        case 0x90: sp[-2].f = (jfloat)sp[-2].d; sp--; pc++; break;
-        case 0x91: sp[-1].i = (jbyte)sp[-1].i; pc++; break;
-        case 0x92: sp[-1].i = (jchar)sp[-1].i; pc++; break;
-        case 0x93: sp[-1].i = (jshort)sp[-1].i; pc++; break;
+        case 0x85: op_85: sp[-1].j = sp[-1].i; sp[0].u = 0; sp++; pc++; NEXT;
+        case 0x86: op_86: sp[-1].f = (jfloat)sp[-1].i; pc++; NEXT;
+        case 0x87: op_87: sp[-1].d = (jdouble)sp[-1].i; sp[0].u = 0; sp++; pc++; NEXT;
+        case 0x88: op_88: sp[-2].i = (jint)sp[-2].j; sp--; pc++; NEXT;
+        case 0x89: op_89: sp[-2].f = (jfloat)sp[-2].j; sp--; pc++; NEXT;
+        case 0x8a: op_8a: sp[-2].d = (jdouble)sp[-2].j; pc++; NEXT;
+        case 0x8b: op_8b: sp[-1].i = d2i(sp[-1].f); pc++; NEXT;
+        case 0x8c: op_8c: sp[-1].j = d2l(sp[-1].f); sp[0].u = 0; sp++; pc++; NEXT;
+        case 0x8d: op_8d: sp[-1].d = sp[-1].f; sp[0].u = 0; sp++; pc++; NEXT;
+        case 0x8e: op_8e: sp[-2].i = d2i(sp[-2].d); sp--; pc++; NEXT;
+        case 0x8f: op_8f: sp[-2].j = d2l(sp[-2].d); pc++; NEXT;
+        case 0x90: op_90: sp[-2].f = (jfloat)sp[-2].d; sp--; pc++; NEXT;
+        case 0x91: op_91: sp[-1].i = (jbyte)sp[-1].i; pc++; NEXT;
+        case 0x92: op_92: sp[-1].i = (jchar)sp[-1].i; pc++; NEXT;
+        case 0x93: op_93: sp[-1].i = (jshort)sp[-1].i; pc++; NEXT;
 
         /* comparisons */
-        case 0x94: { jlong a = sp[-4].j, b = sp[-2].j; sp -= 3; sp[-1].i = a > b ? 1 : a == b ? 0 : -1; pc++; break; }
-        case 0x95: case 0x96: {
+        case 0x94: op_94: { jlong a = sp[-4].j, b = sp[-2].j; sp -= 3; sp[-1].i = a > b ? 1 : a == b ? 0 : -1; pc++; break; }
+        case 0x95: case 0x96: op_95: op_96: {
             jfloat a = sp[-2].f, b = sp[-1].f;
             sp--;
             sp[-1].i = a > b ? 1 : a == b ? 0 : a < b ? -1 : (op == 0x95 ? -1 : 1);
             pc++;
             break;
         }
-        case 0x97: case 0x98: {
+        case 0x97: case 0x98: op_97: op_98: {
             jdouble a = sp[-4].d, b = sp[-2].d;
             sp -= 3;
             sp[-1].i = a > b ? 1 : a == b ? 0 : a < b ? -1 : (op == 0x97 ? -1 : 1);
@@ -891,31 +932,31 @@ reload:
         }
 
         /* branches */
-        case 0x99: pc += (--sp)->i == 0 ? S2(pc + 1) : 3; break;
-        case 0x9a: pc += (--sp)->i != 0 ? S2(pc + 1) : 3; break;
-        case 0x9b: pc += (--sp)->i < 0 ? S2(pc + 1) : 3; break;
-        case 0x9c: pc += (--sp)->i >= 0 ? S2(pc + 1) : 3; break;
-        case 0x9d: pc += (--sp)->i > 0 ? S2(pc + 1) : 3; break;
-        case 0x9e: pc += (--sp)->i <= 0 ? S2(pc + 1) : 3; break;
-        case 0x9f: sp -= 2; pc += sp[0].i == sp[1].i ? S2(pc + 1) : 3; break;
-        case 0xa0: sp -= 2; pc += sp[0].i != sp[1].i ? S2(pc + 1) : 3; break;
-        case 0xa1: sp -= 2; pc += sp[0].i < sp[1].i ? S2(pc + 1) : 3; break;
-        case 0xa2: sp -= 2; pc += sp[0].i >= sp[1].i ? S2(pc + 1) : 3; break;
-        case 0xa3: sp -= 2; pc += sp[0].i > sp[1].i ? S2(pc + 1) : 3; break;
-        case 0xa4: sp -= 2; pc += sp[0].i <= sp[1].i ? S2(pc + 1) : 3; break;
-        case 0xa5: sp -= 2; pc += sp[0].l == sp[1].l ? S2(pc + 1) : 3; break;
-        case 0xa6: sp -= 2; pc += sp[0].l != sp[1].l ? S2(pc + 1) : 3; break;
-        case 0xa7: pc += S2(pc + 1); break;
-        case 0xa8: (sp++)->i = (jint)(pc + 3 - m->code); pc += S2(pc + 1); break;
-        case 0xa9: pc = m->code + locals[pc[1]].i; break;
-        case 0xaa: {
+        case 0x99: op_99: pc += (--sp)->i == 0 ? S2(pc + 1) : 3; NEXT;
+        case 0x9a: op_9a: pc += (--sp)->i != 0 ? S2(pc + 1) : 3; NEXT;
+        case 0x9b: op_9b: pc += (--sp)->i < 0 ? S2(pc + 1) : 3; NEXT;
+        case 0x9c: op_9c: pc += (--sp)->i >= 0 ? S2(pc + 1) : 3; NEXT;
+        case 0x9d: op_9d: pc += (--sp)->i > 0 ? S2(pc + 1) : 3; NEXT;
+        case 0x9e: op_9e: pc += (--sp)->i <= 0 ? S2(pc + 1) : 3; NEXT;
+        case 0x9f: op_9f: sp -= 2; pc += sp[0].i == sp[1].i ? S2(pc + 1) : 3; NEXT;
+        case 0xa0: op_a0: sp -= 2; pc += sp[0].i != sp[1].i ? S2(pc + 1) : 3; NEXT;
+        case 0xa1: op_a1: sp -= 2; pc += sp[0].i < sp[1].i ? S2(pc + 1) : 3; NEXT;
+        case 0xa2: op_a2: sp -= 2; pc += sp[0].i >= sp[1].i ? S2(pc + 1) : 3; NEXT;
+        case 0xa3: op_a3: sp -= 2; pc += sp[0].i > sp[1].i ? S2(pc + 1) : 3; NEXT;
+        case 0xa4: op_a4: sp -= 2; pc += sp[0].i <= sp[1].i ? S2(pc + 1) : 3; NEXT;
+        case 0xa5: op_a5: sp -= 2; pc += sp[0].l == sp[1].l ? S2(pc + 1) : 3; NEXT;
+        case 0xa6: op_a6: sp -= 2; pc += sp[0].l != sp[1].l ? S2(pc + 1) : 3; NEXT;
+        case 0xa7: op_a7: pc += S2(pc + 1); NEXT;
+        case 0xa8: op_a8: (sp++)->i = (jint)(pc + 3 - m->code); pc += S2(pc + 1); NEXT;
+        case 0xa9: op_a9: pc = m->code + locals[pc[1]].i; NEXT;
+        case 0xaa: op_aa: {
             uint32_t a = ((uint32_t)(pc - m->code) + 4) & ~3u;
             uint8_t *p = m->code + a;
             jint def = S4(p), lo = S4(p + 4), hi = S4(p + 8), i = (--sp)->i;
             pc += (i < lo || i > hi) ? def : S4(p + 12 + (uint32_t)(i - lo) * 4);
             break;
         }
-        case 0xab: {
+        case 0xab: op_ab: {
             uint32_t a = ((uint32_t)(pc - m->code) + 4) & ~3u;
             uint8_t *p = m->code + a;
             jint def = S4(p), n = S4(p + 4), key = (--sp)->i, lo = 0, hi = n - 1, off = def;
@@ -929,7 +970,7 @@ reload:
         }
 
         /* returns */
-        case 0xac: case 0xae: case 0xb0: case 0xad: case 0xaf: case 0xb1: {
+        case 0xac: case 0xae: case 0xb0: case 0xad: case 0xaf: case 0xb1: op_ac: op_ae: op_b0: op_ad: op_af: op_b1: {
             Slot v;
             int n;
             if (op == 0xb1) { v.u = 0; n = 0; }
@@ -954,11 +995,11 @@ reload:
             sp = dst;
             if (n >= 1) *sp++ = v;
             if (n == 2) (sp++)->u = 0;
-            break;
+            NEXT;
         }
 
         /* fields */
-        case 0xb2: case 0xb3: {
+        case 0xb2: case 0xb3: op_b2: op_b3: {
             int idx = U2(pc + 1);
             Field *f = cls->cp_res[idx];
             if (!f) { SYNC(); f = resolve_field_ref(cls, idx); if (!f) THROW(); }
@@ -974,9 +1015,9 @@ reload:
                 else { *s = *--sp; }
             }
             pc += 3;
-            break;
+            NEXT;
         }
-        case 0xb4: {
+        case 0xb4: op_b4: {
             int idx = U2(pc + 1);
             Field *f = cls->cp_res[idx];
             if (!f) { SYNC(); f = resolve_field_ref(cls, idx); if (!f) THROW(); }
@@ -986,9 +1027,9 @@ reload:
             sp[-1] = FIELDS(o)[f->slot];
             if (d == 'J' || d == 'D') (sp++)->u = 0;
             pc += 3;
-            break;
+            NEXT;
         }
-        case 0xb5: {
+        case 0xb5: op_b5: {
             int idx = U2(pc + 1);
             Field *f = cls->cp_res[idx];
             if (!f) { SYNC(); f = resolve_field_ref(cls, idx); if (!f) THROW(); }
@@ -1004,11 +1045,11 @@ reload:
             FIELDS(o)[f->slot] = v;
             sp -= 1 + w;
             pc += 3;
-            break;
+            NEXT;
         }
 
         /* calls */
-        case 0xb6: case 0xb7: case 0xb8: case 0xb9: {
+        case 0xb6: case 0xb7: case 0xb8: case 0xb9: op_b6: op_b7: op_b8: op_b9: {
             int idx = U2(pc + 1);
             len = op == 0xb9 ? 5 : 3;
             MethodRef *r = cls->cp_res[idx];
@@ -1041,7 +1082,7 @@ reload:
             }
             goto do_invoke;
         }
-        case 0xba: {
+        case 0xba: op_ba: {
             int idx = U2(pc + 1);
             CallSite *cs = cls->cp_res[idx];
             SYNC();
@@ -1139,7 +1180,7 @@ reload:
             break;
         }
 
-        case 0xbb: {
+        case 0xbb: op_bb: {
             int idx = U2(pc + 1);
             Class *k = cls->cp_res[idx];
             SYNC();
@@ -1155,7 +1196,7 @@ reload:
             pc += 3;
             break;
         }
-        case 0xbc: {
+        case 0xbc: op_bc: {
             static const char types[] = "????ZCFDBSIJ";
             int at = pc[1];
             SYNC();
@@ -1165,7 +1206,7 @@ reload:
             pc += 2;
             break;
         }
-        case 0xbd: {
+        case 0xbd: op_bd: {
             int idx = U2(pc + 1);
             SYNC();
             Class *k = resolve_class_ref(cls, idx);
@@ -1176,21 +1217,21 @@ reload:
             pc += 3;
             break;
         }
-        case 0xbe: {
+        case 0xbe: op_be: {
             Object *a = sp[-1].l;
             if (!a) { SYNC(); npe_msg("Cannot read the array length", NULL, 0); THROW(); }
             sp[-1].i = a->len;
             pc++;
             break;
         }
-        case 0xbf: {
+        case 0xbf: op_bf: {
             Object *e = sp[-1].l;
             SYNC();
             if (!e) { npe_msg("Cannot throw exception", NULL, 0); THROW(); }
             exception = e;
             THROW();
         }
-        case 0xc0: case 0xc1: {
+        case 0xc0: case 0xc1: op_c0: op_c1: {
             int idx = U2(pc + 1);
             Object *o = sp[-1].l;
             if (!o) {
@@ -1206,14 +1247,14 @@ reload:
             pc += 3;
             break;
         }
-        case 0xc2: {
+        case 0xc2: op_c2: {
             Object *o = (--sp)->l;
             if (!o) { sp++; SYNC(); npe_msg("Cannot enter synchronized block", NULL, 0); THROW(); }
             pc++;
             break;
         }
-        case 0xc3: sp--; pc++; break;
-        case 0xc4: {
+        case 0xc3: op_c3: sp--; pc++; NEXT;
+        case 0xc4: op_c4: {
             int wop = pc[1], idx = U2(pc + 2);
             switch (wop) {
                 case 0x15: case 0x17: case 0x19: *sp++ = locals[idx]; break;
@@ -1226,7 +1267,7 @@ reload:
             pc += 4;
             break;
         }
-        case 0xc5: {
+        case 0xc5: op_c5: {
             int idx = U2(pc + 1), dims = pc[3];
             SYNC();
             Class *k = resolve_class_ref(cls, idx);
@@ -1243,11 +1284,11 @@ reload:
             pc += 4;
             break;
         }
-        case 0xc6: pc += (--sp)->l == NULL ? S2(pc + 1) : 3; break;
-        case 0xc7: pc += (--sp)->l != NULL ? S2(pc + 1) : 3; break;
-        case 0xc8: pc += S4(pc + 1); break;
-        case 0xc9: (sp++)->i = (jint)(pc + 5 - m->code); pc += S4(pc + 1); break;
-        default:
+        case 0xc6: op_c6: pc += (--sp)->l == NULL ? S2(pc + 1) : 3; NEXT;
+        case 0xc7: op_c7: pc += (--sp)->l != NULL ? S2(pc + 1) : 3; NEXT;
+        case 0xc8: op_c8: pc += S4(pc + 1); NEXT;
+        case 0xc9: op_c9: (sp++)->i = (jint)(pc + 5 - m->code); pc += S4(pc + 1); NEXT;
+        default: op_default:
             SYNC();
             throw_new("java/lang/VerifyError", "bad bytecode 0x%02x in %s.%s", op, cls->name, m->name);
             THROW();

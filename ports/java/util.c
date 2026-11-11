@@ -481,7 +481,7 @@ double parse_double(const char *s, int *ok) {
         char *end;
         double v = strtod(p, &end);
         if (*end == 'd' || *end == 'D' || *end == 'f' || *end == 'F') end++;
-        if (*end || !strchr(p, 'p') && !strchr(p, 'P')) return 0;
+        if (*end || (!strchr(p, 'p') && !strchr(p, 'P'))) return 0;
         *ok = 1;
         return neg ? -v : v;
     }
