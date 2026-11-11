@@ -34,7 +34,7 @@ if ($Pi4) { $flags += '-DPI4' }
 
 $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadcom/gen/interrupt_handlers.c",
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
-            'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'sdhost.c', 'fat.c', 'myfs.c',
+            'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'sdhost.c', 'sdio.c', 'wifi.c', 'fat.c', 'myfs.c',
             'user.c', 'proc.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c')
 $usb    = @('usb.c', 'net.c', 'remote.c', 'ssh.c', 'rng.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
@@ -45,9 +45,9 @@ $usb    = @('usb.c', 'net.c', 'remote.c', 'ssh.c', 'rng.c',
 # lwIP: the TCP/IP stack used for the USB network
 $lwip = "$tusb/lib/lwip/src"
 if (-not (Test-Path $lwip)) { throw "lwIP missing (run tools\get-deps.ps1)" }
-$usb += @('init.c', 'def.c', 'inet_chksum.c', 'ip.c', 'mem.c', 'memp.c', 'netif.c', 'pbuf.c',
+$usb += @('init.c', 'def.c', 'inet_chksum.c', 'ip.c', 'mem.c', 'memp.c', 'netif.c', 'pbuf.c', 'raw.c',
           'tcp.c', 'tcp_in.c', 'tcp_out.c', 'timeouts.c', 'udp.c') | ForEach-Object { "$lwip/core/$_" }
-$usb += @('etharp.c', 'icmp.c', 'ip4.c', 'ip4_addr.c', 'ip4_frag.c') | ForEach-Object { "$lwip/core/ipv4/$_" }
+$usb += @('dhcp.c', 'etharp.c', 'icmp.c', 'ip4.c', 'ip4_addr.c', 'ip4_frag.c') | ForEach-Object { "$lwip/core/ipv4/$_" }
 $usb += "$lwip/netif/ethernet.c"
 # Monocypher: the cryptography for SSH
 $mono = "../third_party/monocypher/src"

@@ -8,6 +8,9 @@
 //   myos.ticks()      1/100 seconds since start
 //   myos.procs()      running processes (list of dicts), myos.kill(pid)
 //   myos.sysinfo()    memory, CPU temperature and clock, disk, network
+//   myos.wifi_status(), wifi_scan(), wifi_networks(), wifi_connect(ssid, password),
+//   wifi_disconnect(), wifi_forget(ssid), wifi_saved()   Wi-Fi (Pi Zero 2 W)
+#include <string.h>
 #include "py/runtime.h"
 #include "myos.h"
 
@@ -143,7 +146,109 @@ static mp_obj_t myos_kill(mp_obj_t pid) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(myos_kill_obj, myos_kill);
 
+// Wi-Fi (MyOS Pi on a Pi Zero 2 W)
+static mp_obj_t str0(const char *s, size_t max) {      // a C string from a fixed-size field
+    size_t n = 0;
+    while (n < max && s[n]) n++;
+    return mp_obj_new_str(s, n);
+}
+
+// myos.wifi_status(): a dict; 'state' -1 no chip, 0 off, 1 starting, 2 on, 3 joining,
+// 4 joined (getting an address), 5 online
+static mp_obj_t myos_wifi_status(void) {
+    struct myos_wifi_status s;
+    if (sys_wifi(MYOS_WIFI_STATUS, (long)&s, 0) != 0) s.state = -1;
+    mp_obj_t d = mp_obj_new_dict(9);
+    put(d, MP_QSTR_state, mp_obj_new_int(s.state));
+    if (s.state >= 0) {
+        put(d, MP_QSTR_scanning, mp_obj_new_bool(s.scanning));
+        put(d, MP_QSTR_rssi, mp_obj_new_int(s.rssi));
+        put(d, MP_QSTR_ssid, str0(s.ssid, sizeof s.ssid));
+        put(d, MP_QSTR_ip, str0(s.ip, sizeof s.ip));
+        put(d, MP_QSTR_gateway, str0(s.gateway, sizeof s.gateway));
+        put(d, MP_QSTR_mac, str0(s.mac, sizeof s.mac));
+        put(d, MP_QSTR_message, str0(s.message, sizeof s.message));
+    }
+    return d;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(myos_wifi_status_obj, myos_wifi_status);
+
+// myos.wifi_scan(): start a scan; False if there is no Wi-Fi
+static mp_obj_t myos_wifi_scan(void) {
+    return mp_obj_new_bool(sys_wifi(MYOS_WIFI_SCAN, 0, 0) == 0);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(myos_wifi_scan_obj, myos_wifi_scan);
+
+// myos.wifi_networks(): what the last scan found (list of dicts)
+static mp_obj_t myos_wifi_networks(void) {
+    mp_obj_t list = mp_obj_new_list(0, NULL);
+    struct myos_wifi_net n;
+    for (long i = 0; sys_wifi(MYOS_WIFI_RESULT, i, (long)&n) == 0; i++) {
+        mp_obj_t d = mp_obj_new_dict(5);
+        put(d, MP_QSTR_ssid, str0(n.ssid, sizeof n.ssid));
+        put(d, MP_QSTR_rssi, mp_obj_new_int(n.rssi));
+        put(d, MP_QSTR_channel, mp_obj_new_int(n.channel));
+        put(d, MP_QSTR_security, mp_obj_new_int(n.security));
+        put(d, MP_QSTR_saved, mp_obj_new_bool(n.saved));
+        mp_obj_list_append(list, d);
+    }
+    return list;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(myos_wifi_networks_obj, myos_wifi_networks);
+
+// myos.wifi_connect(ssid, password=''): start joining (watch wifi_status())
+static mp_obj_t myos_wifi_connect(size_t n_args, const mp_obj_t *args) {
+    struct myos_wifi_connect c;
+    memset(&c, 0, sizeof c);
+    size_t len;
+    const char *s = mp_obj_str_get_data(args[0], &len);
+    if (len == 0 || len > 32) return mp_const_false;
+    memcpy(c.ssid, s, len);
+    if (n_args > 1) {
+        s = mp_obj_str_get_data(args[1], &len);
+        if (len > 63) return mp_const_false;
+        memcpy(c.password, s, len);
+    }
+    return mp_obj_new_bool(sys_wifi(MYOS_WIFI_CONNECT, (long)&c, 0) == 0);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(myos_wifi_connect_obj, 1, 2, myos_wifi_connect);
+
+static mp_obj_t myos_wifi_disconnect(void) {
+    sys_wifi(MYOS_WIFI_DISCONNECT, 0, 0);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(myos_wifi_disconnect_obj, myos_wifi_disconnect);
+
+// myos.wifi_forget(ssid): drop a saved network
+static mp_obj_t myos_wifi_forget(mp_obj_t ssid) {
+    char buf[33];
+    size_t len;
+    const char *s = mp_obj_str_get_data(ssid, &len);
+    if (len == 0 || len > 32) return mp_const_false;
+    memcpy(buf, s, len);
+    buf[len] = 0;
+    return mp_obj_new_bool(sys_wifi(MYOS_WIFI_FORGET, (long)buf, 0) == 0);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(myos_wifi_forget_obj, myos_wifi_forget);
+
+// myos.wifi_saved(): names of the saved networks
+static mp_obj_t myos_wifi_saved(void) {
+    mp_obj_t list = mp_obj_new_list(0, NULL);
+    char name[33];
+    for (long i = 0; sys_wifi(MYOS_WIFI_SAVED, i, (long)name) == 0; i++)
+        mp_obj_list_append(list, str0(name, sizeof name));
+    return list;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(myos_wifi_saved_obj, myos_wifi_saved);
+
 static const mp_rom_map_elem_t myos_module_globals_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_wifi_status), MP_ROM_PTR(&myos_wifi_status_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wifi_scan), MP_ROM_PTR(&myos_wifi_scan_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wifi_networks), MP_ROM_PTR(&myos_wifi_networks_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wifi_connect), MP_ROM_PTR(&myos_wifi_connect_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wifi_disconnect), MP_ROM_PTR(&myos_wifi_disconnect_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wifi_forget), MP_ROM_PTR(&myos_wifi_forget_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wifi_saved), MP_ROM_PTR(&myos_wifi_saved_obj) },
     { MP_ROM_QSTR(MP_QSTR_procs), MP_ROM_PTR(&myos_procs_obj) },
     { MP_ROM_QSTR(MP_QSTR_sysinfo), MP_ROM_PTR(&myos_sysinfo_obj) },
     { MP_ROM_QSTR(MP_QSTR_kill), MP_ROM_PTR(&myos_kill_obj) },

@@ -137,7 +137,9 @@ static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
 void remote_init(void) {
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_V4);
     if (!pcb) return;
-    if (tcp_bind(pcb, IP_ADDR_ANY, TELNET_PORT) != ERR_OK) {
+    // telnet has no password: only over the USB cable (192.168.7.1), never on Wi-Fi
+    static const ip_addr_t usb_ip = IPADDR4_INIT_BYTES(192, 168, 7, 1);
+    if (tcp_bind(pcb, &usb_ip, TELNET_PORT) != ERR_OK) {
         tcp_close(pcb);
         return;
     }
