@@ -1,16 +1,18 @@
-// ssh.h - SSH server: the shell over the network (192.168.7.1 port 22)
+// ssh.h - SSH server: the shell over the network (192.168.7.1 port 22).
+// Up to ssh_sessions() connections at once; each is numbered 0..n-1 and
+// gets its own terminal (console.c).
 #ifndef SSH_H
 #define SSH_H
 
 void ssh_init(void);                    // after MyFS is mounted (host key lives there)
-void ssh_poll(void);                    // handle incoming packets; call often
-void ssh_putc(char c);
-void ssh_flush(void);
-int ssh_getc(void);                     // a key from the SSH client, or -1
-int ssh_take_connect_event(void);       // 1 once after a shell starts
-int ssh_client(char *out);              // "user@address" of the logged-in client, 0 if none
-void ssh_logout(void);                  // end the SSH session
-int ssh_active(void);                   // 1 while an SSH shell is open
+void ssh_poll(void);                    // handle incoming packets of all sessions; call often
+int ssh_sessions(void);                 // how many sessions there can be
+int ssh_shell_open(int i);              // session i is logged in and has a shell
+void ssh_putc(int i, char c);
+void ssh_flush(int i);
+int ssh_getc(int i);                    // a key from session i, or -1
+int ssh_client(int i, char *out);       // "user@address" of session i, 0 if none
+void ssh_logout(int i);                 // end session i
 
 int ssh_password_set(void);
 int ssh_set_password(const char *pw);   // 0 = saved

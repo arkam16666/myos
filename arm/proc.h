@@ -2,8 +2,9 @@
 #ifndef PROC_H
 #define PROC_H
 #include <stdint.h>
+#include "console.h"
 
-#define NPROC 8                 // slot 0 is the kernel's shell
+#define NPROC 16                // slot 0 is the shell of terminal 0
 
 enum { P_FREE, P_READY, P_ZOMBIE };
 #define EXIT_KILLED  (-2)       // stopped with kill or Ctrl+C
@@ -11,6 +12,8 @@ enum { P_FREE, P_READY, P_ZOMBIE };
 
 typedef struct {
     int state, pid, slot;
+    int tty;                    // its terminal (console.h)
+    int kernel;                 // a kernel thread (a shell), not a program
     char name[16];
     uint64_t ctx[14];           // x19-x30, sp, daif (vectors.S proc_switch)
     uint64_t fp[66] __attribute__((aligned(16)));   // q0-q31, fpcr, fpsr (fp_save)
@@ -32,8 +35,12 @@ void proc_yield(void);                  // let the others run a little
 proc_t *proc_current(void);
 proc_t *proc_by_pid(int pid);
 proc_t *proc_slot(int i);
-int proc_foreground(void);              // pid that gets the keyboard (0 = the shell)
+int proc_foreground(void);              // pid that gets this terminal's keys (0 = its shell)
 void proc_set_foreground(int pid);
+int proc_spawn_kernel(const char *name, void (*fn)(void), int tty);   // a shell thread
+int proc_interrupt(int tty);            // Ctrl+C: 1 if a program was stopped
+void proc_tty_open(int tty);
+void proc_tty_close(int tty);           // stop everything on that terminal
 int proc_kill(int pid);                 // 0 = done
 void proc_exit(int64_t code) __attribute__((noreturn));
 int proc_wait(int pid, int64_t *code);  // shell: wait for a foreground job; 1 = it ended

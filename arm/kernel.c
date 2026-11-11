@@ -118,9 +118,7 @@ static void read_line(char *buf, int size) {
     for (;;) {
         int c = console_getc_nowait();
 #ifndef NO_USB
-        if (usb_take_connect_event() |      // a terminal just opened the USB port
-            remote_take_connect_event() |   // or connected over the network
-            ssh_take_connect_event()) {
+        if (console_tty() == 0 && usb_take_connect_event()) {   // a terminal opened the COM port
             console_puts("\n");
             console_puts(banner);
             console_puts(prompt);
@@ -456,12 +454,18 @@ static void cmd_net(void) {
         console_puts("nobody connected");
     }
     console_puts("\nSSH:      ssh myos@192.168.7.1 - ");
-    if (ssh_client(pc)) {
-        console_puts("logged in: ");
-        console_puts(pc);
-    } else {
-        console_puts(ssh_password_set() ? "nobody logged in" : "no password yet: type 'passwd'");
+    char who[64];
+    int n = 0;
+    for (int i = 0; i < ssh_sessions(); i++) {
+        if (!ssh_client(i, who)) continue;
+        console_puts(n++ ? ", " : "logged in: ");
+        console_puts(who);
+        if (console_tty() == TTY_SSH + i) console_puts(" (you)");
     }
+    if (!n) console_puts(ssh_password_set() ? "nobody logged in" : "no password yet: type 'passwd'");
+    console_puts("\n          (up to ");
+    print_dec((uint64_t)ssh_sessions());
+    console_puts(" sessions at once, each with its own shell)");
     char fp[52];
     if (ssh_fingerprint(fp)) {
         console_puts("\nHost key: ED25519 ");
@@ -511,8 +515,9 @@ static void cmd_passwd(void) {
 
 static void cmd_exit(void) {
 #ifndef NO_USB
-    if (console_last_source() == CONSOLE_SSH) { ssh_logout(); return; }
-    if (console_last_source() == CONSOLE_TELNET) { remote_logout(); return; }
+    int t = console_tty();
+    if (t >= TTY_SSH) { ssh_logout(t - TTY_SSH); return; }
+    if (t == TTY_TELNET) { remote_logout(); return; }
 #endif
     console_puts("'exit' ends an SSH or telnet session; there's nothing to leave here.\n");
 }
@@ -520,17 +525,25 @@ static void cmd_exit(void) {
 // ---------------------------------------------------------------
 //  processes: ps, kill, fg
 // ---------------------------------------------------------------
+static const char *tty_name(int t) {
+    static const char *const names[NTTY] = { "serial", "telnet", "ssh1", "ssh2", "ssh3" };
+    return t >= 0 && t < NTTY ? names[t] : "?";
+}
+
 static void cmd_ps(void) {
-    console_puts("  PID  STATE       MEMORY  TIME  NAME\n");
+    console_puts("  PID  TTY     STATE       MEMORY  TIME  NAME\n");
     for (int i = 0; i < NPROC; i++) {
         proc_t *p = proc_slot(i);
         if (p->state == P_FREE) continue;
-        console_puts("  ");
+        console_puts(p->tty == console_tty() ? "* " : "  ");     // * = this terminal
         if (p->pid < 10) console_putc(' ');
         print_dec((uint64_t)p->pid);
         console_puts("  ");
-        const char *st = i == 0 ? "shell" : p->state == P_ZOMBIE ? "finished"
-                       : p->pid == proc_foreground() ? "foreground" : "background";
+        const char *tn = tty_name(p->tty);
+        console_puts(tn);
+        for (size_t k = strlen(tn); k < 8; k++) console_putc(' ');
+        const char *st = p->kernel ? "shell" : p->state == P_ZOMBIE ? "finished"
+                       : p->background ? "background" : "foreground";
         console_puts(st);
         for (size_t k = strlen(st); k < 12; k++) console_putc(' ');
         uint32_t mb = proc_used_blocks(p) * 2;
@@ -547,7 +560,7 @@ static void cmd_ps(void) {
         console_puts(p->name);
         console_putc('\n');
     }
-    console_puts("Free memory for programs: ");
+    console_puts("* = on this terminal.  Free memory for programs: ");
     print_dec((uint64_t)proc_free_blocks() * 2);
     console_puts(" MB\n");
 }
@@ -592,7 +605,7 @@ static void report_job_end(proc_t *p) {
 static void report_finished_jobs(void) {
     for (int i = 1; i < NPROC; i++) {
         proc_t *p = proc_slot(i);
-        if (p->state == P_ZOMBIE) {
+        if (p->state == P_ZOMBIE && p->tty == console_tty()) {     // only this terminal's jobs
             if (!console_at_line_start()) console_putc('\n');
             report_job_end(p);
             proc_reap(p);
@@ -603,8 +616,8 @@ static void report_finished_jobs(void) {
 static void cmd_fg(const char *arg) {
     int pid = parse_pid(arg);
     proc_t *p = pid > 0 ? proc_by_pid(pid) : 0;
-    if (!p || p->state != P_READY) {
-        console_puts("Usage: fg PID   (a background program from 'ps')\n");
+    if (!p || p->state != P_READY || p->kernel || p->tty != console_tty()) {
+        console_puts("Usage: fg PID   (a background program of this terminal, see 'ps')\n");
         return;
     }
     console_puts("Bringing back ");
@@ -748,6 +761,24 @@ static void cmd_recv(const char *arg) {
 }
 
 // ---------------------------------------------------------------
+//  the shell: one per terminal (the serial one runs on the boot stack,
+//  telnet and SSH ones are kernel threads started when they connect)
+// ---------------------------------------------------------------
+static void shell_loop(void) __attribute__((noreturn));
+
+static void shell_thread(void) {
+    console_puts("\n");
+    console_puts(banner);
+    shell_loop();
+}
+
+void terminal_opened(int t) {           // console.c: telnet or an SSH session came up
+    (void)t;
+    if (proc_spawn_kernel("shell", shell_thread, t) < 0) {
+        // no free process slot: the session gets no shell (it sees nothing)
+    }
+}
+
 int main(void) {
     uart_init();
     led_init();
@@ -755,7 +786,8 @@ int main(void) {
     init_caches();
     extern char myos_vectors[];
     __asm__ volatile ("msr vbar_el1, %0; isb" :: "r"(myos_vectors));
-    user_init();                    // the 2 MB program area becomes EL0-accessible
+    console_init();
+    user_init();                    // floating point for programs, the process table
     timer_init();
 #ifndef NO_USB
     usb_init();
@@ -771,7 +803,10 @@ int main(void) {
     console_puts("\n");
     console_puts(banner);
     print_storage_status();
+    shell_loop();
+}
 
+static void shell_loop(void) {
     char line[250];                 // programs get at most 250 bytes of arguments
     for (;;) {
         report_finished_jobs();

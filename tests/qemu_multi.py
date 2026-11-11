@@ -84,7 +84,7 @@ def main():
         # 2. ps shows it
         send("ps")
         out = read(3, "Free memory")
-        check("ps lists it", re.search(rf"\b{bg}\s+background\s+\d+ MB\s+\d+s\s+lua", out) is not None
+        check("ps lists it", re.search(rf"\b{bg}\s+serial\s+background\s+\d+ MB\s+\d+s\s+lua", out) is not None
               and "shell" in out, out)
 
         # 3. a foreground program runs at the same time
@@ -159,7 +159,7 @@ def main():
         check("background gets no keys", "keys go to the shell" in out and "I don't understand" not in out, out)
         send("ps")
         out = read(3, "Free memory")
-        m = re.search(r"(\d+)\s+background\s+\d+ MB\s+\d+s\s+calc", out)
+        m = re.search(r"(\d+)\s+serial\s+background\s+\d+ MB\s+\d+s\s+calc", out)
         calc = m.group(1) if m else "0"
         send(f"fg {calc}")
         read(2, "Bringing back")

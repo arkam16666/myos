@@ -41,7 +41,8 @@ extern uint64_t enter_user(uint64_t entry, uint64_t sp, uint64_t arg, uint64_t *
 static proc_t procs[NPROC];
 static proc_t *cur;
 static int next_pid = 1;
-static int fg_pid;
+static int tty_fg[NTTY];                // foreground program of each terminal (0 = its shell)
+static int tty_alive[NTTY] = { 1 };
 static uint8_t pool_used[POOL_BLOCKS];
 static uint64_t l1_tables[NPROC][512] __attribute__((aligned(4096)));
 static uint64_t l2_tables[NPROC][512] __attribute__((aligned(4096)));
@@ -89,6 +90,8 @@ void proc_init(void) {
     procs[0].code_block = -1;
     for (int i = 0; i < 16; i++) procs[0].heap[i] = -1;
     strcpy(procs[0].name, "shell");
+    procs[0].kernel = 1;
+    procs[0].tty = 0;
     cur = &procs[0];
 }
 
@@ -101,15 +104,36 @@ proc_t *proc_by_pid(int pid) {
     return 0;
 }
 
-int proc_foreground(void) { return fg_pid; }
-void proc_set_foreground(int pid) { fg_pid = pid; }
+int proc_foreground(void) { return tty_fg[cur->tty]; }
+void proc_set_foreground(int pid) { tty_fg[cur->tty] = pid; }
+
+int proc_interrupt(int tty) {
+    return tty_fg[tty] && proc_kill(tty_fg[tty]) == 0;
+}
+
+void proc_tty_open(int tty) {
+    tty_alive[tty] = 1;
+    tty_fg[tty] = 0;
+}
+
+void proc_tty_close(int tty) {
+    if (tty == 0) return;
+    tty_alive[tty] = 0;
+    tty_fg[tty] = 0;
+    for (int i = 1; i < NPROC; i++) {
+        proc_t *p = &procs[i];
+        if (p->tty != tty) continue;
+        if (p->state == P_READY) p->killed = 1;         // it stops at its next chance
+        else if (p->state == P_ZOMBIE) p->state = P_FREE;
+    }
+}
 
 static void switch_to(proc_t *next) {
     proc_t *prev = cur;
     fp_save(prev->fp);                  // each program has its own floating-point registers
     fp_restore(next->fp);
     cur = next;
-    uint64_t ttbr = next->slot == 0 ? kernel_ttbr0
+    uint64_t ttbr = next->kernel ? kernel_ttbr0
                                     : (uint64_t)next->l1 | (kernel_ttbr0 & 0xFFF);
     __asm__ volatile ("dsb ish; msr ttbr0_el1, %0; isb" :: "r"(ttbr) : "memory");
     flush_tlb();
@@ -154,12 +178,13 @@ static void free_memory(proc_t *p) {
 void proc_exit(int64_t code) {
     __asm__ volatile ("msr daifset, #2");
     cur->exit_code = code;
-    cur->state = P_ZOMBIE;
+    // a shell thread, or a program whose terminal is gone: nobody will ask
+    cur->state = (cur->kernel || !tty_alive[cur->tty]) ? P_FREE : P_ZOMBIE;
     // back on the kernel's tables before giving our blocks away
     __asm__ volatile ("dsb ish; msr ttbr0_el1, %0; isb" :: "r"(kernel_ttbr0) : "memory");
     flush_tlb();
     free_memory(cur);
-    if (fg_pid == cur->pid) fg_pid = 0;
+    if (tty_fg[cur->tty] == cur->pid) tty_fg[cur->tty] = 0;
     proc_yield();                       // a zombie is never picked again
     for (;;) {
     }
@@ -171,14 +196,14 @@ void proc_reap(proc_t *p) {
 
 int proc_kill(int pid) {
     proc_t *p = proc_by_pid(pid);
-    if (!p || p->slot == 0 || p->state != P_READY) return -1;
+    if (!p || p->kernel || p->state != P_READY) return -1;
     p->killed = 1;
     return 0;
 }
 
 int proc_wait(int pid, int64_t *code) {
     proc_t *p = proc_by_pid(pid);
-    while (p && p->state == P_READY && fg_pid == pid) console_poll();   // console_poll yields
+    while (p && p->state == P_READY && tty_fg[cur->tty] == pid) console_poll();   // (it yields)
     if (p && p->state == P_ZOMBIE) {
         *code = p->exit_code;
         proc_reap(p);
@@ -261,6 +286,8 @@ int proc_spawn(const char *name, const char *args, int background) {
     p->pid = next_pid++;
     p->entry = entry;
     p->background = background;
+    p->tty = cur->tty;
+    p->kernel = 0;
     p->started = ticks;
     // a new kernel thread that starts in proc_trampoline -> user_start
     memset(p->ctx, 0, sizeof p->ctx);
@@ -268,7 +295,36 @@ int proc_spawn(const char *name, const char *args, int background) {
     p->ctx[11] = (uint64_t)proc_trampoline;                 // x30: where proc_switch "returns"
     p->ctx[12] = (uint64_t)(kstacks[p->slot] + KSTACK_SIZE);  // sp
     p->ctx[13] = 0x3C0;                                     // interrupts masked until started
-    if (!background) fg_pid = p->pid;
+    if (!background) tty_fg[p->tty] = p->pid;
+    p->state = P_READY;
+    return p->pid;
+}
+
+int proc_spawn_kernel(const char *name, void (*fn)(void), int tty) {
+    proc_t *p = 0;
+    for (int i = 1; i < NPROC && !p; i++) {
+        if (procs[i].state == P_FREE) {
+            p = &procs[i];
+            memset(p, 0, sizeof *p);
+            p->slot = i;
+        }
+    }
+    if (!p) return -1;
+    p->code_block = -1;
+    for (int i = 0; i < 16; i++) p->heap[i] = -1;
+    int k = 0;
+    while (name[k] && k < 15) {
+        p->name[k] = name[k];
+        k++;
+    }
+    p->pid = next_pid++;
+    p->kernel = 1;
+    p->tty = tty;
+    p->started = ticks;
+    p->ctx[0] = (uint64_t)fn;                               // x19: proc_trampoline calls it
+    p->ctx[11] = (uint64_t)proc_trampoline;
+    p->ctx[12] = (uint64_t)(kstacks[p->slot] + KSTACK_SIZE);
+    p->ctx[13] = 0x3C0;
     p->state = P_READY;
     return p->pid;
 }
