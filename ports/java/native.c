@@ -230,6 +230,17 @@ void print_exception_native(Object *ex) {
 }
 
 void jvm_exit(int code) {
+    extern int gc_verbose;
+    if (gc_verbose > 0) {
+        int nc = 0;
+        for (Class *k = class_list; k; k = k->all_next) nc++;
+#ifdef MYOS_LIBC
+        extern size_t myos_heap_free(void);
+        fprintf(stderr, "[java: exit %d, %d classes, C heap free %lu KB]\n", code, nc, (unsigned long)(myos_heap_free() / 1024));
+#else
+        fprintf(stderr, "[java: exit %d, %d classes]\n", code, nc);
+#endif
+    }
     fflush(stdout);
     fflush(stderr);
     exit(code);

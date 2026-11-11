@@ -193,6 +193,20 @@ static int jvm_main(int argc, char **argv) {
     }
 
     Class *mc = load_class(main_name);
+    {
+        extern int gc_verbose;
+        if (gc_verbose > 0) {
+            int nc = 0;
+            for (Class *k = class_list; k; k = k->all_next) nc++;
+#ifdef MYOS_LIBC
+            extern size_t myos_heap_free(void);
+            fprintf(stderr, "[java: %d classes loaded, Java heap %lu KB, C heap free %lu KB]\n", nc,
+                    (unsigned long)(heap_total_bytes() / 1024), (unsigned long)(myos_heap_free() / 1024));
+#else
+            fprintf(stderr, "[java: %d classes loaded, Java heap %lu KB]\n", nc, (unsigned long)(heap_total_bytes() / 1024));
+#endif
+        }
+    }
     if (!mc) {
         char dotted[300];
         java_name(main_name, dotted, sizeof dotted);

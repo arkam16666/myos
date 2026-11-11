@@ -219,7 +219,7 @@ static Object *alloc_bytes(size_t size, Class *c) {
     if (size >= 0x7fffffff) goto oom;
     if (size >= EXT_MIN && c->is_array) {
         /* collect now and then, so dead big arrays give their memory back */
-        if (ext_since_gc > heap_size / 2) gc_collect();
+        if (ext_since_gc > heap_size / 4) gc_collect();
         Object *o = ext_alloc(size);
         if (!o) {
             gc_collect();
@@ -471,9 +471,10 @@ void gc_collect(void) {
         size_t biggest = (size_t)(top - bump);
         for (Object *o = large; o; o = NEXT_FREE(o)) if (o->gc > biggest) biggest = o->gc;
         fprintf(stderr, "[gc: %lu KB free of %lu KB; small objects %lu KB, big %lu KB; biggest free block %lu KB;"
-                        " %lu KB in big arrays outside the heap]\n",
+                        " %lu KB in big arrays outside the heap; mark stack %lu KB]\n",
                 (unsigned long)(heap_free_bytes() / 1024), (unsigned long)(heap_size / 1024),
                 (unsigned long)((bump - heap) / 1024), (unsigned long)((heap_end - top) / 1024),
-                (unsigned long)(biggest / 1024), (unsigned long)(ext_bytes / 1024));
+                (unsigned long)(biggest / 1024), (unsigned long)(ext_bytes / 1024),
+                (unsigned long)(mcap * sizeof(Object *) / 1024));
     }
 }

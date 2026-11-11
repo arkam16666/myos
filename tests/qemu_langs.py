@@ -161,7 +161,7 @@ def prepare_java(tmp):
     java = os.path.join(os.path.dirname(javac), "java.exe" if os.name == "nt" else "java")
     src = os.path.join(ROOT, "ports", "java", "tests")
     out = {}
-    release8 = {f: True for f in os.listdir(src) if f.endswith(".java")}
+    release8 = {f: False for f in os.listdir(src) if f.endswith(".java")}   # javac default target
     for cmd, r8, _, _ in JAVA_TESTS:
         for w in cmd.split():
             if w.replace(".class", "") + ".java" in release8:
