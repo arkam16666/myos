@@ -31,9 +31,9 @@ Test suites (from the repo root; set `PYTHONIOENCODING=utf-8`, the Thai path on 
 - `python tests/qemu_multi.py` – multitasking (`&`, ps, kill, fg, Ctrl+C, memory isolation)
 - `python tests/qemu_fs.py [A ... G]` – MyFS v2: folders, 500 files, reclaim, v1 → v2 upgrade, fragmentation, repair at mount, `fsexpand` onto a fake Linux partition (F: 256 MB card, G: 8 GB card, sparse file)
 - `python tests/qemu_linux.py` – Linux programs: ELF loader + syscalls (`tests/linux/lxtest.c`), BusyBox applets, sh, vi, signals, /proc
+- `python tests/host/pip_host.py` – pip's logic under CPython against the real micropython.org index (`qemu_langs.py java` likewise compares MyOS's output with the PC's own `java`)
 
-Each suite picks a free TCP port for QEMU's serial (override with `MYOS_TEST_PORT`), so suites can run in parallel, but with 4+ QEMUs at once timing-sensitive checks (boot banner, htop) can fail; rerun a failing suite alone before calling it a bug. Known failures on the owner's Windows PC, also without any change: `qemu_arm.py` raspi3b "boot banner + disk", "files survive" and "boot" (empty output from those cold boots); compare against them rather than expecting a clean run. A full `qemu_apps.py` run takes over 10 minutes (more than one foreground tool call allows: run it in the background).
-- `python tests/host/pip_host.py` – pip's logic under CPython against the real micropython.org index; `qemu_langs.py java` compiles `ports/java/tests` with the PC's javac and compares MyOS's output with the PC's `java` QEMU builds have no USB: networking, SSH, telnet and Wi-Fi can only be tested on the real Pi.
+Each suite picks a free TCP port for QEMU's serial (override with `MYOS_TEST_PORT`), so suites can run in parallel, but with 4+ QEMUs at once timing-sensitive checks (boot banner, htop) can fail; rerun a failing suite alone before calling it a bug. Known failures on the owner's Windows PC, also without any change: `qemu_arm.py` raspi3b "boot banner + disk", "files survive" and "boot" (empty output from those cold boots); compare against them rather than expecting a clean run. A full `qemu_apps.py` run takes over 10 minutes (more than one foreground tool call allows: run it in the background). QEMU builds have no USB: networking, SSH, telnet and Wi-Fi can only be tested on the real Pi.
 
 ### Real Pi
 
