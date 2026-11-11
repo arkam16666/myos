@@ -127,6 +127,10 @@
 enum { ST_NOCHIP = -1, ST_OFF, ST_STARTING, ST_ON, ST_JOINING, ST_JOINED, ST_ONLINE };
 static int state = ST_OFF;
 static int busy_pid = -1;               // who is starting / talking to the chip
+static int auto_reconnect;              // the network dropped us: join again by ourselves
+static uint64_t reconnect_at;           // ... at this time (millis)
+static int reconnect_tries;
+static int connect_start(const char *ssid, const char *pass, int save);
 static uint32_t chip_id, chip_rev;
 static char fw_version[96];
 static uint8_t mac[6];
@@ -1113,7 +1117,10 @@ static void handle_event(const uint8_t *eth, uint32_t len) {
         case E_DISASSOC:
             if (state >= ST_JOINED) {
                 link_down();
-                set_message("disconnected by the network");
+                set_message("disconnected by the network: reconnecting ...");
+                auto_reconnect = 1;                     // work() joins again in a moment
+                reconnect_tries = 0;
+                reconnect_at = millis() + 3000;
             } else if (state == ST_JOINING && type != E_DISASSOC && type != E_DEAUTH) {
                 join_fail("the network refused us (wrong password?)");
             }
@@ -1206,8 +1213,18 @@ static void work(void) {
         }
     }
     if (scanning && millis() - scan_started > 15000) scanning = 0;
+    // dropped by the network (router restart, weak signal ...): try the same
+    // network again every 10 s, after 5 tries every minute, until it works
+    // or someone says 'wifi disconnect' / 'wifi connect' / 'wifi forget'
+    if (auto_reconnect && state == ST_ON && !join_pending && !scanning && millis() >= reconnect_at) {
+        reconnect_tries++;
+        reconnect_at = millis() + (reconnect_tries < 5 ? 10000 : 60000);
+        set_message("reconnecting ...");
+        connect_start(join_ssid, join_pass, 0);
+    }
 #ifndef NO_USB
     if (state == ST_JOINED && have_address()) {
+        auto_reconnect = 0;
         state = ST_ONLINE;
         set_message("online");
         net_lock();
@@ -1432,6 +1449,7 @@ static void cmd_connect(const char *arg) {
         return;
     }
     if (start_or_say()) return;
+    auto_reconnect = 0;                                 // the person decides now
     console_puts("Connecting to ");
     console_puts(ssid);
     console_puts(" ...\n");
@@ -1560,6 +1578,7 @@ static void cmd_status(void) {
 
 static void cmd_disconnect(void) {
     join_pending = 0;
+    auto_reconnect = 0;
     if (state < ST_JOINING) {
         console_puts("Not connected.\n");
         return;
@@ -1569,6 +1588,22 @@ static void cmd_disconnect(void) {
     state = ST_ON;
     set_message("disconnected");
     console_puts("Disconnected.\n");
+}
+
+// a test: leave the network as if the router had dropped us (auto-reconnect follows)
+static void cmd_drop(void) {
+    if (state < ST_JOINED) {
+        console_puts("Not connected.\n");
+        return;
+    }
+    ioctl(WLC_DISASSOC, 1, 0, 0, 0, 0);
+    link_down();
+    state = ST_ON;
+    set_message("dropped (test): reconnecting ...");
+    auto_reconnect = 1;
+    reconnect_tries = 0;
+    reconnect_at = millis() + 3000;
+    console_puts("Dropped. MyOS should join again by itself in a few seconds ('wifi' shows it).\n");
 }
 
 static void cmd_forget(const char *arg) {
@@ -1582,6 +1617,7 @@ static void cmd_forget(const char *arg) {
         console_puts("Usage: wifi forget NAME   (see 'wifi status' for the saved ones)\n");
         return;
     }
+    if (strcmp(ssid, join_ssid) == 0) auto_reconnect = 0;
     if (cfg_forget(ssid)) {
         console_puts("Not a saved network: ");
         console_puts(ssid);
@@ -1609,6 +1645,7 @@ void wifi_command(const char *arg) {
     else if (strcmp(arg, "scan") == 0) cmd_scan();
     else if (strncmp(arg, "connect", 7) == 0 && (arg[7] == ' ' || arg[7] == 0)) cmd_connect(arg + 7);
     else if (strcmp(arg, "disconnect") == 0) cmd_disconnect();
+    else if (strcmp(arg, "drop") == 0) cmd_drop();
     else if (strcmp(arg, "log") == 0) cmd_log();
     else if (strncmp(arg, "forget", 6) == 0 && (arg[6] == ' ' || arg[6] == 0)) cmd_forget(arg + 6);
     else if (strcmp(arg, "on") == 0) {
@@ -1730,6 +1767,7 @@ int64_t wifi_syscall(uint64_t op, uint64_t a, uint64_t b) {
             c.ssid[32] = 0;
             c.password[63] = 0;
             if (!c.ssid[0] || !take()) return -1;
+            auto_reconnect = 0;
             if (state < ST_ON && (state == ST_NOCHIP || !myfs_mounted() || chip_start())) { give(); return -1; }
             add_netif();
             int r = connect_start(c.ssid, c.password, 1);
@@ -1739,6 +1777,7 @@ int64_t wifi_syscall(uint64_t op, uint64_t a, uint64_t b) {
         case MYOS_WIFI_DISCONNECT:
             if (!take()) return -1;
             join_pending = 0;
+            auto_reconnect = 0;
             if (state >= ST_JOINING) {
                 ioctl(WLC_DISASSOC, 1, 0, 0, 0, 0);
                 link_down();
@@ -1753,6 +1792,7 @@ int64_t wifi_syscall(uint64_t op, uint64_t a, uint64_t b) {
             int i = 0;
             for (; i < 32 && user_ok(a + (uint64_t)i, 1) && ((const char *)a)[i]; i++) ssid[i] = ((const char *)a)[i];
             ssid[i] = 0;
+            if (strcmp(ssid, join_ssid) == 0) auto_reconnect = 0;
             return cfg_forget(ssid) ? -1 : 0;
         }
         case MYOS_WIFI_SAVED:
