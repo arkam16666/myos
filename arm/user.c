@@ -42,13 +42,15 @@ static int user_range(uint64_t addr, uint64_t len) {
     return 0;
 }
 
-// copy a file name from program memory; 0 if it's not a sensible name
-static int user_name(uint64_t addr, char *out) {
-    for (int i = 0; i <= MYFS_NAME_MAX; i++) {
+// copy a path from program memory and make it absolute (from the program's
+// current folder); 0 if it's not a sensible path
+static int user_path(uint64_t addr, char *out) {
+    char raw[MYFS_PATH_MAX];
+    for (int i = 0; i < MYFS_PATH_MAX; i++) {
         if (!user_range(addr + i, 1)) return 0;
         char c = *(const char *)(addr + i);
-        out[i] = c;
-        if (c == 0) return i > 0;
+        raw[i] = c;
+        if (c == 0) return i > 0 && myfs_normalize(proc_cwd(), raw, out) == 0;
         if (c <= ' ' || c > '~') return 0;
     }
     return 0;
@@ -97,6 +99,9 @@ enum {
     SYS_TICKS, SYS_SLEEP, SYS_FILESIZE, SYS_READFILE, SYS_WRITEFILE, SYS_DELETE,
     SYS_LISTFILES, SYS_KEYNOW, SYS_PROCINFO, SYS_SYSINFO, SYS_KILL
 };
+enum {                          // MyFS v2 folders (csdk/myos.h): from 32 on
+    SYS_MKDIR = 32, SYS_RMDIR, SYS_RENAME, SYS_STAT, SYS_READDIR, SYS_CHDIR, SYS_GETCWD
+};
 
 static int64_t sys_procinfo(uint64_t index, uint64_t addr) {
     if (!user_range(addr, sizeof(struct myos_procinfo))) return -1;
@@ -138,6 +143,48 @@ static int64_t sys_sysinfo(uint64_t addr) {
     out->proc_slots = NPROC;
     for (int t = 0; t < NTTY; t++) out->terminals_open += console_tty_open(t);
     return 0;
+}
+
+static int64_t sys_stat(uint64_t path, uint64_t addr) {
+    char p[MYFS_PATH_MAX];
+    if (!user_path(path, p) || !user_range(addr, sizeof(struct myos_stat))) return MYFS_ERR_NAME;
+    uint32_t size;
+    int t = myfs_stat(p, &size);
+    if (t < 0) return t;
+    struct myos_stat *out = (struct myos_stat *)addr;
+    out->type = (uint32_t)t;
+    out->size = size;
+    return 0;
+}
+
+static int64_t sys_readdir(uint64_t path, uint64_t index, uint64_t addr) {
+    char p[MYFS_PATH_MAX];
+    if (!user_path(path, p) || !user_range(addr, sizeof(struct myos_dirent))) return MYFS_ERR_NAME;
+    struct myos_dirent *out = (struct myos_dirent *)addr;
+    uint32_t size = 0;
+    int t = myfs_readdir(p, (int)index, out->name, &size);
+    if (t <= 0) return t;
+    out->type = (uint32_t)t;
+    out->size = size;
+    return 1;
+}
+
+static int64_t sys_chdir(uint64_t path) {
+    char p[MYFS_PATH_MAX];
+    if (!user_path(path, p)) return MYFS_ERR_NAME;
+    int t = myfs_stat(p, 0);
+    if (t < 0) return t;
+    if (t != MYFS_DIR) return MYFS_ERR_NOTDIR;
+    strcpy(proc_current()->cwd, p);
+    return 0;
+}
+
+static int64_t sys_getcwd(uint64_t addr, uint64_t size) {
+    const char *cwd = proc_cwd();
+    uint64_t n = strlen(cwd);
+    if (n >= size || !user_range(addr, n + 1)) return -1;
+    memcpy((void *)addr, cwd, n + 1);
+    return (int64_t)n;
 }
 
 static int is_foreground(void) {
@@ -185,7 +232,7 @@ static int64_t sys_readline(uint64_t buf, uint64_t size) {
 }
 
 static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
-    char name[MYFS_NAME_MAX + 1];
+    char name[MYFS_PATH_MAX], other[MYFS_PATH_MAX];
     switch (n) {
         case SYS_EXIT:
             proc_exit((int64_t)a);
@@ -214,24 +261,41 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
             proc_current()->waiting = 0;
             return 0;
         }
+        // file names may be paths, from the program's current folder
         case SYS_FILESIZE:
-            if (!user_name(a, name)) return -1;
+            if (!user_path(a, name)) return -1;
             return myfs_size(name);
         case SYS_READFILE:
-            if (!user_name(a, name) || !user_range(b, c)) return -1;
+            if (!user_path(a, name) || !user_range(b, c)) return -1;
             return myfs_read(name, 0, (void *)b, (uint32_t)c);
         case SYS_WRITEFILE:
-            if (!user_name(a, name) || !user_range(b, c)) return -1;
+            if (!user_path(a, name) || !user_range(b, c)) return -1;
             return myfs_write(name, (const void *)b, (uint32_t)c) ? -1 : 0;
         case SYS_DELETE:
-            if (!user_name(a, name)) return -1;
+            if (!user_path(a, name)) return -1;
             return myfs_remove(name) ? -1 : 0;
-        case SYS_LISTFILES: {
-            uint32_t size;
-            if (!user_range(b, MYFS_NAME_MAX + 1) || myfs_entry((int)a, name, &size)) return -1;
+        case SYS_LISTFILES: {                       // files of the current folder (old call:
+            uint32_t size;                          //  48-byte buffer, longer names are cut)
+            if (!user_range(b, MYFS_V1_NAME_MAX + 1) ||
+                myfs_file_entry(proc_cwd(), (int)a, name, &size)) return -1;
+            name[MYFS_V1_NAME_MAX] = 0;
             memcpy((void *)b, name, strlen(name) + 1);
             return size;
         }
+        case SYS_MKDIR:
+            return user_path(a, name) ? myfs_mkdir(name) : MYFS_ERR_NAME;
+        case SYS_RMDIR:
+            return user_path(a, name) ? myfs_rmdir(name) : MYFS_ERR_NAME;
+        case SYS_RENAME:
+            return user_path(a, name) && user_path(b, other) ? myfs_rename(name, other) : MYFS_ERR_NAME;
+        case SYS_STAT:
+            return sys_stat(a, b);
+        case SYS_READDIR:
+            return sys_readdir(a, b, c);
+        case SYS_CHDIR:
+            return sys_chdir(a);
+        case SYS_GETCWD:
+            return sys_getcwd(a, b);
         case SYS_PROCINFO:
             return sys_procinfo(a, b);
         case SYS_SYSINFO:

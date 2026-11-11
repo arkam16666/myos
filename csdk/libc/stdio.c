@@ -15,7 +15,7 @@ enum { F_FREE, F_FILE, F_STDIN, F_STDOUT };
 
 struct myos_file {
     int kind;
-    char name[48];              /* "" for tmpfile() */
+    char name[FILENAME_MAX];    /* "" for tmpfile() */
     unsigned char *buf;
     size_t len, cap, pos;
     int can_read, can_write, append, dirty, eof, err;
@@ -399,8 +399,16 @@ int remove(const char *name) {
     return 0;
 }
 
-int rename(const char *from, const char *to) {          /* MyFS has no rename: copy + delete */
-    long size = sys_file_size(from);
+int myos_errno(long r);                                 /* dir.c */
+
+int rename(const char *from, const char *to) {
+    long r = sys_rename(from, to);                      /* MyOS Pi: the kernel renames */
+    if (r == 0) return 0;
+    if (r != MYOS_EIO) {
+        errno = myos_errno(r);
+        return -1;
+    }
+    long size = sys_file_size(from);                    /* (older kernel: copy + delete) */
     if (size < 0) {
         errno = ENOENT;
         return -1;

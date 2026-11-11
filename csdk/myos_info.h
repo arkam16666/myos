@@ -32,4 +32,17 @@ struct myos_sysinfo {
     uint32_t terminals_open;
 };
 
+/* SYS_STAT (MyFS v2 folders) */
+struct myos_stat {
+    uint32_t type;          /* 1 file, 2 folder */
+    uint32_t size;          /* bytes */
+};
+
+/* SYS_READDIR: one thing in a folder */
+struct myos_dirent {
+    char name[64];          /* up to 63 characters */
+    uint32_t type;          /* 1 file, 2 folder */
+    uint32_t size;
+};
+
 #endif
