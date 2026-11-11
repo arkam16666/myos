@@ -1,15 +1,17 @@
 # htop - what MyOS is doing right now: CPU, memory, temperature, Wi-Fi, processes
 #   up/down (or j/k) select a process, K kills it, s changes the sort order,
 #   q quits. 'htop -a' draws with plain ASCII (for terminals without UTF-8).
-# @version 2.1
+# @version 2.2
 # @description Process viewer: CPU, memory, programs
 import sys
 import time
 import myos
 
 ASCII = "-a" in sys.argv[1:] or "--ascii" in sys.argv[1:]
-W = 79                                  # the screen: 80 x 24 (a full last column can wrap)
-ROWS = 14                               # process lines
+W = 79                                  # usable columns (the terminal's width - 1: a full
+ROWS = 14                               #   last column can wrap); process lines
+LEFT = 38                               # width of the meters column
+WIDE = False                            # room for the START column
 TTY = {0: "serial", 1: "telnet", 2: "ssh1", 3: "ssh2", 4: "ssh3"}
 SORTS = ("CPU%", "MEM", "PID", "TIME+")
 
@@ -145,6 +147,23 @@ def wifi_text():
 
 
 # ---------------------------------------------------------------- the screen
+def resize():
+    """fit the terminal's real size (python 1.9+ can ask it); True if it changed"""
+    global W, ROWS, LEFT, WIDE
+    size = None
+    try:
+        size = myos.termsize()
+    except Exception:                       # an older python: no termsize
+        pass
+    cols, rows = size if size else (80, 24)
+    cols, rows = max(64, min(cols, 240)), max(16, min(rows, 120))
+    old = (W, ROWS)
+    W, ROWS = cols - 1, rows - 9            # 9 = title, 4 meters, history, line, header, footer
+    LEFT = max(38, W // 2 - 2)
+    WIDE = W >= 95
+    return (W, ROWS) != old
+
+
 def draw(st, selected, top, message):
     info, procs, cpu = st["info"], st["procs"], st["cpu"]
     out = []
@@ -159,10 +178,11 @@ def draw(st, selected, top, message):
     mem_frac = used / info["mem_total_kb"] if info["mem_total_kb"] else 0
     temp = info["temp"]
     lefts = [
-        meter("CPU", total, level_colour(total) + "%5.1f%%" % (total * 100) + OFF),
-        meter("Mem", mem_frac, TEXT + "%s/%s" % (size_kb(used), size_kb(info["mem_total_kb"])) + OFF),
+        meter("CPU", total, level_colour(total) + "%5.1f%%" % (total * 100) + OFF, LEFT),
+        meter("Mem", mem_frac, TEXT + "%s/%s" % (size_kb(used), size_kb(info["mem_total_kb"])) + OFF, LEFT),
         meter("Tmp", (temp - 30) / 55 if temp > 0 else 0,
-              (level_colour((temp - 30) / 55) + "%.1f%s" % (temp, DEG) + OFF) if temp > 0 else GREY + "n/a" + OFF),
+              (level_colour((temp - 30) / 55) + "%.1f%s" % (temp, DEG) + OFF) if temp > 0 else GREY + "n/a" + OFF,
+              LEFT),
         " " + LABEL + BOLD + "Net " + OFF + GREEN + UP + OFF + TEXT + " %d/s " % st["out_rate"] + OFF
         + CYAN + DOWN + OFF + TEXT + " %d/s" % st["in_rate"] + OFF + GREY + "  (USB packets)" + OFF,
     ]
@@ -176,13 +196,14 @@ def draw(st, selected, top, message):
         LABEL + "Wi-Fi: " + OFF + wifi_text(),
     ]
     for l, r in zip(lefts, rights):
-        out.append(pad(l, 40) + " " + r)
+        out.append(pad(l, LEFT + 2) + " " + r)
     # CPU history, one column per second
     graph_w = W - 13
     out.append(" " + LABEL + BOLD + "CPU" + OFF + GREY + " history " + OFF + sparkline(st["history"], graph_w))
     out.append(GREY + " " + LINE * (W - 2) + OFF)
     # the table
-    cols = ("   PID", " TTY    ", " STATE   ", "   CPU%", "    MEM", "     TIME+", "  COMMAND")
+    cols = ("   PID", " TTY    ", " STATE   ", "   CPU%", "    MEM", "     TIME+") \
+        + (("     START",) if WIDE else ()) + ("  COMMAND",)
     head = ""
     for name in cols:
         if name.strip() == SORTS[st["sort"]]:
@@ -205,9 +226,11 @@ def draw(st, selected, top, message):
         cpu_txt = "%6.1f" % (c * 100)
         mem = size_kb(p["mem_kb"]) if p["mem_kb"] else "-"
         name = p["name"]
+        started = clock(max(0, info["ticks"] - p.get("start_ticks", info["ticks"])))
         if top + i == selected:
-            text = " %5d %-7s %s %-6s %s %6s %9s  %s" % (pid, TTY.get(p["tty"], "?"), DOT_RUN if p["running"] else " ",
-                                                        state, cpu_txt, mem, cpu_time(p["cpu_ticks"]), name)
+            text = " %5d %-7s %s %-6s %s %6s %9s" % (pid, TTY.get(p["tty"], "?"), DOT_RUN if p["running"] else " ",
+                                                    state, cpu_txt, mem, cpu_time(p["cpu_ticks"])) \
+                + ((" %9s" % started) if WIDE else "") + "  " + name
             out.append(SEL + BOLD + pad(text, W) + OFF)
             continue
         cpu_col = (level_colour(min(1.0, c * 2)) if c >= 0.005 else GREY) + cpu_txt + OFF
@@ -215,7 +238,8 @@ def draw(st, selected, top, message):
         cmd = (CYAN + name) if p["shell"] else (BOLD + fg(231) + name)
         out.append(colour + " %5d " % pid + GREY + "%-7s " % TTY.get(p["tty"], "?") + dot + OFF + " "
                    + colour + "%-6s" % state + OFF + " " + cpu_col + " " + mem_col + " "
-                   + GREY + "%9s" % cpu_time(p["cpu_ticks"]) + OFF + "  " + cmd + OFF)
+                   + GREY + "%9s" % cpu_time(p["cpu_ticks"]) + OFF
+                   + ((" " + GREY + "%9s" % started + OFF) if WIDE else "") + "  " + cmd + OFF)
     for _ in range(ROWS - len(shown)):
         out.append("")
     # footer
@@ -246,6 +270,7 @@ def sort_procs(procs, cpu, how):
 
 
 def main():
+    resize()
     myos.clear()
     myos.cursor(False)
     selected, top, message = 0, 0, ""
@@ -266,7 +291,7 @@ def main():
                 for p in procs:
                     cpu[p["pid"]] = (p["cpu_ticks"] - last_cpu.get(p["pid"], p["cpu_ticks"])) / dt
                 if next_update:                 # (not on the first round: no "before" yet)
-                    st["history"] = (st["history"] + [cpu["total"]])[-W:]
+                    st["history"] = (st["history"] + [cpu["total"]])[-240:]
                     st["in_rate"] = (info["net_in"] - last_info["net_in"]) * 100 // dt
                     st["out_rate"] = (info["net_out"] - last_info["net_out"]) * 100 // dt
                 last_cpu = {p["pid"]: p["cpu_ticks"] for p in procs}
@@ -275,6 +300,12 @@ def main():
                 st["info"], st["procs"], st["cpu"] = info, procs, cpu
                 selected = min(selected, max(0, len(procs) - 1))
                 next_update = now + 100
+                st["rounds"] = st.get("rounds", 0) + 1
+                if st["rounds"] % 3 == 0 and resize():     # the window changed size
+                    myos.clear()
+                if selected >= top + ROWS:
+                    top = selected - ROWS + 1
+                top = max(0, min(top, selected))
                 draw(st, selected, top, message)
                 message = ""
             k = myos.key()

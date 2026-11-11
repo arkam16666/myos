@@ -109,7 +109,7 @@ apt install -y snake    ใช้ apt / apt-get แทน pkg ได้ (รั�
 - **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps, chess (หมากรุกกับคอม, เดินแบบ `e2e4`), sudoku, sokoban (เข็นกล่อง 9 ด่าน), invaders
 - **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf, bc (เครื่องคิดเลขเลขยาวไม่จำกัด เหมือน `bc` ของ Linux, `bc -l` มี sin/cos/log), cal (ปฏิทิน มีปี พ.ศ.), sqlite3 (ฐานข้อมูล SQL)
 - **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz, sl (รถไฟ เวลาพิมพ์ `ls` ผิด), neofetch (ข้อมูลเครื่องคู่โลโก้)
-- **ระบบ:** htop (ดู CPU, อุณหภูมิ, หน่วยความจำ, โปรเซส; ลูกศรเลือก, `K` kill, `q` ออก), wifiman (จัดการ Wi-Fi)
+- **ระบบ:** htop (เต็มหน้าต่าง terminal ปรับตามขนาดเอง: แถบสี CPU/หน่วยความจำ/อุณหภูมิ, กราฟ CPU ย้อนหลัง, Wi-Fi, โปรเซส; ลูกศรเลือก, `K` kill, `s` เปลี่ยนการเรียง, `q` ออก, `htop -a` สำหรับ terminal ที่ไม่มี UTF-8), wifiman (จัดการ Wi-Fi)
 - **โปรแกรม C เดิม:** calc, cdemo, countdown, crashme, fortune, guess, python
 
 **ภาษาโปรแกรม** (`pkg search language`):

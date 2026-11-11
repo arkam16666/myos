@@ -95,6 +95,12 @@ int main(const char *args) {
     mp_stack_ctrl_init();
     mp_stack_set_limit(256 * 1024);
     gc_init(PY_HEAP_START, PY_HEAP_START + PY_HEAP_SIZE);
+#if defined(__aarch64__)
+    // collect after every 1 MB allocated instead of only when the 28 MB are used
+    // up: freed blocks get reused from the bottom, so a program only takes (2 MB
+    // blocks of) the RAM it really keeps, and several can run side by side
+    MP_STATE_MEM(gc_alloc_threshold) = (1024 * 1024) / MICROPY_BYTES_PER_GC_BLOCK;
+#endif
     mp_init();
     // import also looks in /lib, where 'pip install' puts libraries
     mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));

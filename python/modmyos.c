@@ -52,6 +52,36 @@ static mp_obj_t myos_getkey(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(myos_getkey_obj, myos_getkey);
 
+// myos.termsize() -> (columns, rows) of the terminal, or None if it doesn't answer.
+// MyOS can't know the window size, so ask the terminal itself: put the cursor
+// at the far corner (it stops at the edge) and ask where it is (ESC [ 6 n);
+// the answer ESC [ rows ; cols R comes back like typed keys.
+static mp_obj_t myos_termsize(void) {
+    while (sys_keynow() >= 0) {                         // (old keys out of the way)
+    }
+    sys_print("\x1b" "7\x1b[999;999H\x1b[6n\x1b" "8");
+    unsigned long until = sys_ticks() + 30;             // 300 ms
+    char buf[24];
+    int n = 0;
+    while (sys_ticks() < until) {
+        int c = sys_keynow();
+        if (c < 0) continue;
+        if (n == 0 && c != 0x1b) continue;
+        if (n < (int)sizeof buf - 1) buf[n++] = (char)c;
+        if (c == 'R') break;
+    }
+    buf[n] = 0;
+    int rows = 0, cols = 0, i = 2;
+    if (n < 6 || buf[1] != '[' || buf[n - 1] != 'R') return mp_const_none;
+    for (; buf[i] >= '0' && buf[i] <= '9'; i++) rows = rows * 10 + buf[i] - '0';
+    if (buf[i++] != ';') return mp_const_none;
+    for (; buf[i] >= '0' && buf[i] <= '9'; i++) cols = cols * 10 + buf[i] - '0';
+    if (rows < 5 || cols < 20) return mp_const_none;
+    mp_obj_t t[2] = { mp_obj_new_int(cols), mp_obj_new_int(rows) };
+    return mp_obj_new_tuple(2, t);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(myos_termsize_obj, myos_termsize);
+
 static mp_obj_t myos_clear(void) {
     sys_print("\x1b[2J\x1b[H");
     return mp_const_none;
@@ -305,6 +335,7 @@ static const mp_rom_map_elem_t myos_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_key), MP_ROM_PTR(&myos_key_obj) },
     { MP_ROM_QSTR(MP_QSTR_getkey), MP_ROM_PTR(&myos_getkey_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&myos_clear_obj) },
+    { MP_ROM_QSTR(MP_QSTR_termsize), MP_ROM_PTR(&myos_termsize_obj) },
     { MP_ROM_QSTR(MP_QSTR_move), MP_ROM_PTR(&myos_move_obj) },
     { MP_ROM_QSTR(MP_QSTR_cursor), MP_ROM_PTR(&myos_cursor_obj) },
     { MP_ROM_QSTR(MP_QSTR_ticks), MP_ROM_PTR(&myos_ticks_obj) },
