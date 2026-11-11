@@ -267,11 +267,75 @@ static uint8_t *phys(proc_t *p, uint64_t va) {
     return (uint8_t *)((*e & ADDR_MASK) + (va & (BLOCK - 1)));
 }
 
+// ---------------------------------------------------------------
+//  a copy of the last program file in RAM: MyFS reads 512 bytes at a time,
+//  so loading BusyBox (1.1 MB) for every command of a shell pipeline would
+//  be slow on the Pi. The copy is checked against the file (size + 8
+//  sampled pieces) every time, and dropped when memory runs out.
+// ---------------------------------------------------------------
+#define ECACHE_MAX (8UL << 20)
+#define ECACHE_PROBES 8
+static struct {
+    char path[MYFS_PATH_MAX];
+    int32_t size;
+    uint8_t *mem;
+    int nblocks;
+    uint8_t probe[ECACHE_PROBES][32];
+} ecache;
+
+static void ecache_drop(void) {
+    if (ecache.mem) proc_mem_free((uint64_t)ecache.mem, ecache.nblocks);
+    ecache.mem = 0;
+    ecache.path[0] = 0;
+}
+
+static uint64_t lx_mem_alloc(int n) {              // pool blocks; the cache goes first if short
+    uint64_t m = proc_mem_alloc(n);
+    if (!m && ecache.mem) {
+        ecache_drop();
+        m = proc_mem_alloc(n);
+    }
+    return m;
+}
+
+static uint32_t probe_off(int i, int32_t size) {
+    uint64_t o = (uint64_t)(uint32_t)size * (uint64_t)i / ECACHE_PROBES;
+    return (uint32_t)(o + 32 > (uint64_t)(uint32_t)size ? (size > 32 ? size - 32 : 0) : o);
+}
+
+// 1 if ecache holds file now (loading it if it fits)
+static int ecache_get(const char *file) {
+    int32_t size = myfs_size(file);
+    if (size <= 0 || (uint64_t)size > ECACHE_MAX) return 0;
+    uint32_t n = size < 32 ? (uint32_t)size : 32;
+    if (ecache.mem && ecache.size == size && !strcmp(ecache.path, file)) {
+        uint8_t b[32];
+        int same = 1;
+        for (int i = 0; i < ECACHE_PROBES && same; i++)
+            same = myfs_read(file, probe_off(i, size), b, n) == (int)n && !memcmp(b, ecache.probe[i], n);
+        if (same) return 1;
+    }
+    ecache_drop();
+    int nb = (int)(((uint64_t)size + BLOCK - 1) / BLOCK);
+    uint64_t m = proc_mem_alloc(nb);
+    if (!m) return 0;
+    if (myfs_read(file, 0, (void *)m, (uint32_t)size) != size) {
+        proc_mem_free(m, nb);
+        return 0;
+    }
+    ecache.mem = (uint8_t *)m;
+    ecache.nblocks = nb;
+    ecache.size = size;
+    strcpy(ecache.path, file);
+    for (int i = 0; i < ECACHE_PROBES; i++) memcpy(ecache.probe[i], ecache.mem + probe_off(i, size), n);
+    return 1;
+}
+
 static int map_block(proc_t *p, uint64_t va) {
     uint64_t *e = pte(p, va);
     if (!e) return 0;
     if (*e & 1) return 1;
-    uint64_t m = proc_mem_alloc(1);
+    uint64_t m = lx_mem_alloc(1);
     if (!m) return 0;
     *e = proc_user_desc(m);
     data_clean_and_invalidate(e, 8);
@@ -478,7 +542,7 @@ static int file_reserve(file_t *f, uint64_t need) {
     int n = (int)((need + BLOCK - 1) / BLOCK);
     if (n < f->nblocks * 2) n = f->nblocks * 2;
     if ((uint64_t)n * BLOCK > MAX_FILE) n = (int)(MAX_FILE / BLOCK);
-    uint64_t m = proc_mem_alloc(n);
+    uint64_t m = lx_mem_alloc(n);
     if (!m) return -ENOSPC;
     if (f->buf) {
         memcpy((void *)m, f->buf, f->size);
@@ -496,6 +560,7 @@ static int file_put(int i) {
     if (--f->refs > 0) return 0;
     int r = 0;
     if (f->type == FT_FILE && f->buf) {
+        if (f->dirty && !strcmp(f->name, ecache.path)) ecache_drop();
         if (f->dirty && myfs_write(f->name, f->buf, (uint32_t)f->size)) r = -ENOSPC;
         proc_mem_free((uint64_t)f->buf, f->nblocks);
         f->buf = 0;
@@ -1883,6 +1948,7 @@ static int elf_check(const char *file, elf_t *e, int loud) {
 static int elf_load(proc_t *p, const char *file, elf_t *e, uint64_t *phdr_va) {
     lx_t *x = LX(p);
     uint64_t hi = 0;
+    int cached = ecache_get(file);
     *phdr_va = 0;
     x->code_lo = ~0ull;
     x->code_hi = 0;
@@ -1900,7 +1966,8 @@ static int elf_load(proc_t *p, const char *file, elf_t *e, uint64_t *phdr_va) {
             uint64_t n = BLOCK - (at & (BLOCK - 1));
             if (n > left) n = left;
             uint8_t *m = phys(p, at);
-            if (myfs_read(file, (uint32_t)off, m, (uint32_t)n) != (int)n) return -EIO;
+            if (cached && off + n <= (uint64_t)ecache.size) memcpy(m, ecache.mem + off, n);
+            else if (myfs_read(file, (uint32_t)off, m, (uint32_t)n) != (int)n) return -EIO;
             data_clean_and_invalidate(m, n);
             off += n;
             at += n;
@@ -2229,7 +2296,7 @@ static int64_t sys_clone(proc_t *p, trapframe_t *f, uint64_t flags, uint64_t sta
         for (uint64_t va = s; va < e; va += BLOCK) {
             uint8_t *src = phys(p, va);
             if (!src) continue;
-            uint64_t m = proc_mem_alloc(1);
+            uint64_t m = lx_mem_alloc(1);
             if (!m) {
                 linux_free(c);
                 c->linux = 0;
@@ -2292,7 +2359,7 @@ static int64_t sys_execve(proc_t *p, trapframe_t *f, uint64_t upath, uint64_t ua
     int r = elf_check(file, &e, 0);
     if (r < 0) return r;
     // argv and envp: copy them out before the old memory goes
-    uint64_t scratch = proc_mem_alloc(1);
+    uint64_t scratch = lx_mem_alloc(1);
     if (!scratch) return -ENOMEM;
     strs_t s = { (char *)scratch, 0, MAX_ARGS, 0, 0 };
     r = 0;
@@ -2358,8 +2425,9 @@ static int wait_status(proc_t *q) {
     return (int)((q->exit_code & 0xFF) << 8);
 }
 
-static int64_t sys_wait4(proc_t *p, int64_t pid, uint64_t ustatus, int options) {
+static int64_t sys_wait4(proc_t *p, int64_t pid, uint64_t ustatus, int options, uint64_t urusage) {
     if (ustatus && !uok(p, ustatus, 4)) return -EFAULT;
+    if (urusage && !uok(p, urusage, 144)) return -EFAULT;
     for (;;) {
         int have = 0;
         for (int i = 1; i < NPROC; i++) {
@@ -2369,6 +2437,11 @@ static int64_t sys_wait4(proc_t *p, int64_t pid, uint64_t ustatus, int options) 
             have = 1;
             if (q->state == P_ZOMBIE) {
                 if (ustatus) *(int32_t *)ustatus = wait_status(q);
+                if (urusage) {                      // struct rusage: only the user time is known
+                    memset((void *)urusage, 0, 144);
+                    ((int64_t *)urusage)[0] = (int64_t)(q->cpu_ticks / TICKS_PER_SECOND);
+                    ((int64_t *)urusage)[1] = (int64_t)(q->cpu_ticks % TICKS_PER_SECOND * 10000);
+                }
                 int qp = q->pid;
                 proc_reap(q);
                 return qp;
@@ -2705,6 +2778,7 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
             }
             if (kind != R_FILE) return -EPERM;
             if (a2 & AT_REMOVEDIR) return myfs_size(name) < 0 ? -ENOENT : -ENOTDIR;
+            if (!strcmp(name, ecache.path)) ecache_drop();
             return (kind = myfs_remove(name)) ? fs_err(kind) : 0;
         case 38: case 276:                          // renameat, renameat2(olddir, old, newdir, new)
             if ((kind = upath(p, a1, name, &fdno)) < 0) return kind;
@@ -2712,6 +2786,7 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
             if ((kind = upath(p, a3, name2, &fdno)) < 0) return kind;
             if (kind != R_FILE && kind != R_DIR) return -EPERM;
             if (!strcmp(name, name2)) return 0;
+            if (!strcmp(name, ecache.path) || !strcmp(name2, ecache.path)) ecache_drop();
             if (myfs_stat(name2, 0) == MYFS_FILE && myfs_stat(name, 0) == MYFS_FILE) myfs_remove(name2);
             return (kind = myfs_rename(name, name2)) ? fs_err(kind) : 0;
         case 34:                                    // mkdirat(dirfd, path, mode)
@@ -2850,7 +2925,7 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
         case 221:                                   // execve
             return sys_execve(p, f, a0, a1, a2);
         case 260:                                   // wait4
-            return sys_wait4(p, (int64_t)a0, a1, (int)a2);
+            return sys_wait4(p, (int64_t)a0, a1, (int)a2, a3);
         case 95: {                                  // waitid(P_ALL/P_PID, id, info, options)
             return -ENOSYS;
         }
