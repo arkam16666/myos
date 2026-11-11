@@ -14,6 +14,11 @@
 #include "myfs.h"
 #include "print.h"
 #include "proc.h"
+#include "../csdk/myos_info.h"
+#ifndef NO_USB
+#include "broadcom/vcmailbox.h"
+#include "net.h"
+#endif
 #include "timer.h"
 #include "user.h"
 
@@ -90,14 +95,57 @@ int run_program(const char *name, const char *args, int background) {
 enum {
     SYS_EXIT, SYS_PRINT, SYS_PUTC, SYS_GETKEY, SYS_READLINE, SYS_PRINTNUM,
     SYS_TICKS, SYS_SLEEP, SYS_FILESIZE, SYS_READFILE, SYS_WRITEFILE, SYS_DELETE,
-    SYS_LISTFILES, SYS_KEYNOW
+    SYS_LISTFILES, SYS_KEYNOW, SYS_PROCINFO, SYS_SYSINFO, SYS_KILL
 };
+
+static int64_t sys_procinfo(uint64_t index, uint64_t addr) {
+    if (!user_range(addr, sizeof(struct myos_procinfo))) return -1;
+    proc_t *p = proc_slot((int)index);
+    if (!p) return -1;                              // past the last slot
+    struct myos_procinfo *out = (struct myos_procinfo *)addr;
+    memset(out, 0, sizeof *out);
+    if (p->state == P_FREE) return 0;               // an empty slot (state 0)
+    out->pid = p->pid;
+    out->tty = p->tty;
+    out->state = p->state == P_READY ? 1 : 2;
+    out->kind = p->kernel ? 1 : 0;
+    out->foreground = !p->kernel && !p->background && p->state == P_READY;
+    out->mem_kb = proc_used_blocks(p) * 2048;
+    out->cpu_ticks = p->cpu_ticks;
+    out->start_ticks = p->started;
+    memcpy(out->name, p->name, sizeof out->name);
+    return 0;
+}
+
+static int64_t sys_sysinfo(uint64_t addr) {
+    if (!user_range(addr, sizeof(struct myos_sysinfo))) return -1;
+    struct myos_sysinfo *out = (struct myos_sysinfo *)addr;
+    memset(out, 0, sizeof *out);
+    out->ticks = ticks;
+    out->idle_ticks = proc_idle_ticks();
+    out->mem_total_kb = proc_total_blocks() * 2048;
+    out->mem_free_kb = proc_free_blocks() * 2048;
+#ifndef NO_USB                                      // (the firmware mailbox: not in QEMU builds)
+    out->temp_millic = (int32_t)vcmailbox_get_temperature();
+    out->arm_hz = vcmailbox_get_clock_rate_measured(VCMAILBOX_CLOCK_ARM);
+    out->net_in = net_packets_in();
+    out->net_out = net_packets_out();
+#endif
+    if (myfs_mounted()) {
+        out->files = (uint32_t)myfs_count();
+        out->disk_free_kb = myfs_free_kb();
+    }
+    out->proc_slots = NPROC;
+    for (int t = 0; t < NTTY; t++) out->terminals_open += console_tty_open(t);
+    return 0;
+}
 
 static int is_foreground(void) {
     return proc_current()->pid == proc_foreground();
 }
 
 static int getkey(void) {
+    proc_current()->waiting = 1;
     for (;;) {
         if (!is_foreground()) {                     // only the foreground program gets keys
             console_poll();
@@ -105,6 +153,7 @@ static int getkey(void) {
         }
         int c = console_getc_nowait();
         if (c < 0) continue;
+        proc_current()->waiting = 0;
         if (c == '\r') return '\n';                 // Enter, as on MyOS PC
         if (c == 127) return 8;                     // Backspace
         return c;
@@ -160,7 +209,9 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
             return (int64_t)ticks;
         case SYS_SLEEP: {
             uint64_t until = ticks + a;
+            proc_current()->waiting = 1;            // (counted as idle, not as busy)
             while (ticks < until) console_poll();
+            proc_current()->waiting = 0;
             return 0;
         }
         case SYS_FILESIZE:
@@ -181,6 +232,12 @@ static int64_t syscall(uint64_t n, uint64_t a, uint64_t b, uint64_t c) {
             memcpy((void *)b, name, strlen(name) + 1);
             return size;
         }
+        case SYS_PROCINFO:
+            return sys_procinfo(a, b);
+        case SYS_SYSINFO:
+            return sys_sysinfo(a);
+        case SYS_KILL:
+            return proc_kill((int)a);
         case SYS_KEYNOW: {                          // a key if one is waiting, else -1
             if (!is_foreground()) {
                 console_poll();

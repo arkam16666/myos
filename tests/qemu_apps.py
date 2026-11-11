@@ -58,6 +58,7 @@ TESTS = {
     "typetest":  ("typetest", [line(""), line("abc"), line(""), line("abc"), line(""), line("abc")],
                   ["words per minute", "Average:"]),
     "mathquiz":  ("mathquiz", [line("1")] * 10, ["/10 right"]),
+    "htop":      ("htop", [3, DOWN, 1, "q"], ["MyOS htop", "CPU [", "Mem [", "PID TTY", "htop"]),
     "rps":       ("rps", [line(c) for c in "rpsrpsrpsrpsrpsrpsrpsrpsrpsrps"] + [line("q")], ["score  you"]),
 }
 # a second command run after the app, and what it must print

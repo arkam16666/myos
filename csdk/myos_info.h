@@ -1,0 +1,35 @@
+/* myos_info.h - what the system-information calls hand to programs
+ * (shared by the kernel, arm/user.c, and programs through myos.h). */
+#ifndef MYOS_INFO_H
+#define MYOS_INFO_H
+#include <stdint.h>
+
+/* SYS_PROCINFO: one process (index 0.. until the call returns -1) */
+struct myos_procinfo {
+    int32_t pid;
+    int32_t tty;            /* 0 serial, 1 telnet, 2.. ssh sessions */
+    int32_t state;          /* 1 running, 2 finished (not collected yet), 0 = empty slot */
+    int32_t kind;           /* 0 program, 1 shell (kernel thread) */
+    int32_t foreground;     /* 1 if it gets its terminal's keys */
+    uint32_t mem_kb;        /* RAM it has (2 MB blocks) */
+    uint64_t cpu_ticks;     /* 1/100 s it has run */
+    uint64_t start_ticks;   /* when it started (1/100 s since boot) */
+    char name[16];
+};
+
+/* SYS_SYSINFO */
+struct myos_sysinfo {
+    uint64_t ticks;         /* 1/100 s since boot */
+    uint64_t idle_ticks;    /* ticks when only waiting shells ran */
+    uint32_t mem_total_kb;  /* the RAM pool for programs */
+    uint32_t mem_free_kb;
+    int32_t temp_millic;    /* CPU temperature in 1/1000 C (0 = unknown) */
+    uint32_t arm_hz;        /* CPU clock (0 = unknown) */
+    uint32_t net_in, net_out;   /* USB network packets */
+    uint32_t files;         /* files on MyFS */
+    uint32_t disk_free_kb;
+    uint32_t proc_slots;    /* most processes at once */
+    uint32_t terminals_open;
+};
+
+#endif

@@ -13,8 +13,12 @@ enum {
     SYS_EXIT, SYS_PRINT, SYS_PUTC, SYS_GETKEY,
     SYS_READLINE, SYS_PRINTNUM, SYS_TICKS, SYS_SLEEP,
     SYS_FILESIZE, SYS_READFILE, SYS_WRITEFILE, SYS_DELETE, SYS_LISTFILES,
-    SYS_KEYNOW      /* MyOS Pi only: a key if one is waiting, else -1 */
+    SYS_KEYNOW,     /* MyOS Pi only: a key if one is waiting, else -1 */
+    SYS_PROCINFO,   /* MyOS Pi only: (index, struct myos_procinfo *) -> 0, or -1 past the end */
+    SYS_SYSINFO,    /* MyOS Pi only: (struct myos_sysinfo *) */
+    SYS_KILL        /* MyOS Pi only: (pid) stop a program -> 0, or -1 */
 };
+#include "myos_info.h"
 
 #if defined(__aarch64__)
 /* MyOS Pi: 'svc #0', service number in x8, arguments x0-x2, result in x0 */
@@ -54,6 +58,9 @@ static inline void sys_printnum(unsigned long n)   { myos_syscall(SYS_PRINTNUM, 
 static inline unsigned long sys_ticks(void)        { return (unsigned long)myos_syscall(SYS_TICKS, 0, 0); }
 static inline void sys_sleep(unsigned long ticks)  { myos_syscall(SYS_SLEEP, (long)ticks, 0); }
 static inline int  sys_keynow(void)                { return (int)myos_syscall(SYS_KEYNOW, 0, 0); }
+static inline long sys_procinfo(long i, struct myos_procinfo *p) { return myos_syscall(SYS_PROCINFO, i, (long)p); }
+static inline long sys_sysinfo(struct myos_sysinfo *s) { return myos_syscall(SYS_SYSINFO, (long)s, 0); }
+static inline long sys_kill(long pid)              { return myos_syscall(SYS_KILL, pid, 0); }
 
 /* files on the MyFS disk; every call returns -1 on error */
 static inline long sys_file_size(const char *name) {

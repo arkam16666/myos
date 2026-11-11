@@ -50,6 +50,7 @@ void TIMER_1_IRQHandler(void) {
         }
         SYSTMR->C1 = next_tick;
     } while ((int32_t)(SYSTMR->CLO - next_tick) >= 0);  // already passed? (else no more interrupts)
+    proc_tick();                            // CPU time for 'ps' and htop
     proc_need_resched = 1;                  // a program has had its 10 ms: next one (proc.c)
 }
 

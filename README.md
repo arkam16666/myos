@@ -104,10 +104,11 @@ pkg remove snake        ลบ
 pkg upgrade             อัปเดตแอปที่มีเวอร์ชันใหม่
 pkg list                แอปที่อยู่ในเครื่อง
 ```
-แอปที่มีตอนนี้ (37 ตัว):
+แอปที่มีตอนนี้ (38 ตัว):
 - **เกม:** snake, blocks, 2048, mines, maze, four, ttt, hangman, words, blackjack, rps
 - **เครื่องมือ:** edit (text editor แบบ nano เขียนโค้ดบน Pi ได้, Ctrl+R รัน), todo, units, stopwatch, primes, dice, banner, cowsay, bf
 - **ของเล่น:** life, mandel, matrix, hanoi, typetest, mathquiz
+- **ระบบ:** htop (ดู CPU, อุณหภูมิ, หน่วยความจำ, โปรเซส; ลูกศรเลือก, `K` kill, `q` ออก)
 - **โปรแกรม C เดิม:** calc, cdemo, countdown, crashme, fortune, guess, python
 
 **ภาษาโปรแกรม** (`pkg search language`):
@@ -126,7 +127,7 @@ pkg list                แอปที่อยู่ในเครื่อ�
 
 ข้อจำกัด: Pi ไม่มีนาฬิกา `os.time()` / `time()` นับจาก 1 ม.ค. 2000 ตอนเปิดเครื่อง, ยังรันคำสั่ง shell จากในโปรแกรมไม่ได้ (`os.execute`)
 
-เขียนแอปเพิ่มเองได้: วางไฟล์ `.py` ใน `apps\py\` ใส่บรรทัด `# @version 1.0` และ `# @description ...` แล้วเปิด `tools\repo.py` ใหม่ แอปใช้โมดูล `myos` ได้: `myos.key()` (อ่านปุ่มไม่ต้องรอ Enter), `myos.getkey()`, `myos.clear()`, `myos.move(x, y)`, `myos.cursor(on)`, `myos.ticks()` ทดสอบแอปทั้งหมดใน QEMU ด้วย `python tests\qemu_apps.py`
+เขียนแอปเพิ่มเองได้: วางไฟล์ `.py` ใน `apps\py\` ใส่บรรทัด `# @version 1.0` และ `# @description ...` แล้วเปิด `tools\repo.py` ใหม่ แอปใช้โมดูล `myos` ได้: `myos.key()` (อ่านปุ่มไม่ต้องรอ Enter), `myos.getkey()`, `myos.clear()`, `myos.move(x, y)`, `myos.cursor(on)`, `myos.ticks()`, `myos.procs()`, `myos.sysinfo()`, `myos.kill(pid)` ทดสอบแอปทั้งหมดใน QEMU ด้วย `python tests\qemu_apps.py`
 
 ข้อจำกัด: MyFS ตอนนี้เก็บได้สูงสุด 64 ไฟล์ (จะแก้ในข้อ 3.4 MyFS v2)
 

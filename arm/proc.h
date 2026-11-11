@@ -25,6 +25,8 @@ typedef struct {
     int64_t exit_code;
     uint64_t entry;
     uint64_t started;           // ticks
+    uint64_t cpu_ticks;         // ticks it was running when the timer went off
+    int waiting;                // in a system call that waits (keys, sleep): not really busy
 } proc_t;
 
 void proc_init(void);
@@ -48,6 +50,9 @@ void proc_reap(proc_t *p);              // forget an ended process
 int proc_handle_fault(uint64_t addr, uint64_t esr);    // heap page fault -> 1 if fixed
 int proc_user_ensure(uint64_t addr, uint64_t len);     // map heap the kernel will touch
 uint32_t proc_free_blocks(void);        // 2 MB blocks left in the pool
+uint32_t proc_total_blocks(void);
+void proc_tick(void);                   // timer interrupt: charge the running process
+uint64_t proc_idle_ticks(void);         // ticks when only a waiting shell was running
 uint32_t proc_used_blocks(const proc_t *p);
 
 #endif

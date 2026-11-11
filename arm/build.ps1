@@ -129,6 +129,11 @@ if ((Test-Path ../third_party/micropython/py) -and $make) {
     try { & $make ARCH=arm64 -j8 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '\berror\b' } | ForEach-Object { Write-Host "  $_" } }
     finally { Pop-Location; $env:PATH = $savedPath; $ErrorActionPreference = 'Stop' }
     if (-not (Test-Path ../python/build-arm64/python)) { throw "MicroPython (ARM) build failed" }
+    # a half-finished build once left an old binary behind: make sure the myos module is in it
+    $pybin = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Resolve-Path ../python/build-arm64/python)))
+    if (-not ($pybin.Contains('sysinfo') -and $pybin.Contains('getkey'))) {
+        throw "MicroPython (ARM) binary is missing the myos module - run arm\build.ps1 again"
+    }
     python ../tools/mkpkg.py ../python/build-arm64/python ../python/python.info build/packages/python.pkg
 }
 Write-Host "Built arm\build\kernel8.img ($((Get-Item build/kernel8.img).Length) bytes) and kernel8-qemu.img"

@@ -439,10 +439,10 @@ static int install_buffer(uint32_t total, int depth) {
     }
     db_set(prog, version);
     char pv[16];
-    if (kind == KIND_PYTHON &&                          // dependency: python 1.1+ (myos module)
-        (myfs_size("python") < 0 || !db_version("python", pv) || strcmp(pv, "1.1") < 0)) {
+    if (kind == KIND_PYTHON &&                          // dependency: python 1.3+ (myos module)
+        (myfs_size("python") < 0 || !db_version("python", pv) || strcmp(pv, "1.3") < 0)) {
         console_puts(prog);
-        console_puts(" is a Python app; it needs python 1.1 or newer.\n");
+        console_puts(" is a Python app; it needs python 1.3 or newer.\n");
         if (!install("python", 0, depth + 1)) return 0;
     }
     console_puts("Done. Type '");

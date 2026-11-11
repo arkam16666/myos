@@ -70,6 +70,18 @@ uint32_t proc_free_blocks(void) {
     return n;
 }
 
+uint32_t proc_total_blocks(void) { return POOL_BLOCKS; }
+
+static uint64_t idle_ticks;
+
+void proc_tick(void) {
+    if (!cur) return;
+    if (cur->kernel || cur->waiting) idle_ticks++;  // a shell, or a program waiting for keys/time
+    else cur->cpu_ticks++;
+}
+
+uint64_t proc_idle_ticks(void) { return idle_ticks; }
+
 uint32_t proc_used_blocks(const proc_t *p) {
     uint32_t n = p->code_block >= 0;
     for (int i = 0; i < 16; i++) n += p->heap[i] >= 0;
@@ -279,8 +291,17 @@ int proc_spawn(const char *name, const char *args, int background) {
     data_clean_and_invalidate(p->l1, 4096);
     data_clean_and_invalidate(p->l2, 4096);
 
+    // its name in ps/htop: the program, or for "python app.py" the app
     const char *s = name;
     int k = 0;
+    if (strcmp(name, "python") == 0) {
+        const char *e = args;
+        while (*e && *e != ' ') e++;
+        if (e - args > 3 && memcmp(e - 3, ".py", 3) == 0) {
+            for (const char *q = args; q < e - 3 && k < 15; q++) p->name[k++] = *q;
+            s = "";
+        }
+    }
     while (*s && k < 15) p->name[k++] = *s++;
     p->name[k] = 0;
     p->pid = next_pid++;
