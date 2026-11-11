@@ -93,6 +93,9 @@ PROGRAMS += [
     ("python float",      "7 / 2",                ["3.5"]),
     ("python bigint",     "2 ** 100",             ["1267650600228229401496703205376"]),
     ("python files",      "import os; sorted(os.listdir())[:2]", ["calc.pkg"]),
+    ("python big memory", "b = bytes(8 * 1024 * 1024); l = [bytearray(1 << 20) for i in range(12)]; len(b) + len(l)",
+                          ["8388620"], 6),
+    ("python memory back", "del b, l; import gc; gc.collect(); len(bytes(16 * 1024 * 1024))", ["16777216"], 6),
     ("python exit hint",  "exit",                 ["Use exit() or quit() to leave Python"]),
     ("python leaves",     "exit()",               ["myos> "], 2),
 ]

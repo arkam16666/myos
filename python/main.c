@@ -13,7 +13,17 @@
 #include "shared/runtime/pyexec.h"
 #include "myos.h"
 
-static char heap[MICROPY_HEAP_SIZE];
+#if defined(__aarch64__)
+// MyOS Pi gives every program 32 MB at 0x02000000 (arm/user.h USER_HEAP), mapped
+// 2 MB at a time when first touched; this port doesn't use csdk's malloc, so
+// the Python heap takes 28 MB of it (it used to be 512 KB inside the program)
+#define PY_HEAP_START ((char *)0x02000000UL)
+#define PY_HEAP_SIZE  (28u * 1024 * 1024)
+#else
+static char heap[MICROPY_HEAP_SIZE];        // MyOS PC: no such region
+#define PY_HEAP_START heap
+#define PY_HEAP_SIZE  sizeof(heap)
+#endif
 
 // exit() and quit() as in desktop Python; typing just "exit" says how to leave
 static const char startup_code[] =
@@ -84,7 +94,7 @@ static int run_script(const char *args) {
 int main(const char *args) {
     mp_stack_ctrl_init();
     mp_stack_set_limit(256 * 1024);
-    gc_init(heap, heap + sizeof(heap));
+    gc_init(PY_HEAP_START, PY_HEAP_START + PY_HEAP_SIZE);
     mp_init();
     // import also looks in /lib, where 'pip install' puts libraries
     mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("/lib")));
