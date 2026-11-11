@@ -109,6 +109,10 @@ char *strerror(int err) {
         case ERANGE: return "Result out of range";
         case EDOM:   return "Math argument out of domain";
         case ENOSYS: return "Not supported on MyOS";
+        case EEXIST: return "Already exists";
+        case ENOTDIR: return "Not a folder";
+        case EISDIR: return "Is a folder";
+        case ENOTEMPTY: return "Folder is not empty";
         default:     return "Unknown error";
     }
 }

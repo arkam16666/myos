@@ -11,7 +11,7 @@
 | ภาษาของ kernel | Assembly (`kernel.asm`) | C (`arm\`) |
 | Shell | ✅ | ✅ ผ่าน USB serial (COM) และ GPIO serial |
 | Interrupt | ✅ | ✅ timer + USB |
-| ระบบไฟล์ MyFS | ✅ | ✅ ใน `myfs.img` บน SD card |
+| ระบบไฟล์ MyFS | ✅ v1 (แบน, 64 ไฟล์) | ✅ v2 ใน `myfs.img` บน SD card (โฟลเดอร์, ไม่จำกัดจำนวนไฟล์, คืนพื้นที่) |
 | อัปเดต OS / ส่งไฟล์โดยไม่ถอดการ์ด | — | ✅ ผ่าน USB (`update-pi.ps1`, `push-pi.ps1`) |
 | แยกสิทธิ์ kernel / โปรแกรม | ✅ ring 0 / ring 3 | ✅ EL1 / EL0 |
 | System call + ตัวโหลดโปรแกรม | ✅ 13 บริการ | ✅ 13 บริการ (เลขเดียวกัน) |
@@ -27,7 +27,7 @@
 - Network (ไม่มี driver การ์ดเครือข่าย, TCP/IP, SSH)
 - Text editor ใน OS
 - Ctrl+C, ปุ่มลูกศร, ประวัติคำสั่ง
-- MyFS: ไม่มีโฟลเดอร์, จำกัด 64 ไฟล์, ลบไฟล์แล้วไม่ได้พื้นที่คืน
+- MyFS (x86): ไม่มีโฟลเดอร์, จำกัด 64 ไฟล์, ลบไฟล์แล้วไม่ได้พื้นที่คืน (Pi ใช้ MyFS v2 แล้ว)
 
 **เฉพาะ x86**
 - บูตบนเครื่องจริง (ตอนนี้เป็น BIOS + ฟลอปปี้ ทดสอบแค่ใน QEMU)
@@ -108,8 +108,13 @@
   - เสร็จเมื่อ: กดลูกศรขึ้นเรียกคำสั่งเก่าได้
 - [ ] **3.3** Text editor เต็มจอ (เป็นแพ็กเกจ)
   - เสร็จเมื่อ: แก้ไฟล์ `.py` ใน MyOS แล้วรันได้
-- [ ] **3.4** MyFS v2: โฟลเดอร์, คืนพื้นที่เมื่อลบไฟล์
-  - เสร็จเมื่อ: `mkdir`, `cd` ใช้ได้
+- [x] **3.4** MyFS v2: โฟลเดอร์, คืนพื้นที่เมื่อลบไฟล์ (Pi)
+  - เสร็จเมื่อ: `mkdir`, `cd` ใช้ได้ ✅ (tests/qemu_fs.py)
+  - โฟลเดอร์ซ้อนกันได้, ไฟล์กี่พันไฟล์ก็ได้, ชื่อยาว 63 ตัว, ไฟล์ใหญ่ได้เท่าที่ว่าง, bitmap พื้นที่ว่าง (ลบแล้วได้คืนทันที)
+  - เขียนแบบ copy-on-write: ข้อมูลก่อน แล้วค่อยเขียน entry ใน sector เดียว ไฟดับเสียอย่างมากแค่ไฟล์ที่กำลังเขียน ตอน mount ตรวจทุกโฟลเดอร์และคืนพื้นที่ที่ค้าง
+  - shell: `cd`, `pwd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm -r`, `tree`, `fsck`, `fsupgrade` (โฟลเดอร์ปัจจุบันแยกต่อ terminal)
+  - MyFS v1 เดิมยังใช้ได้ `fsupgrade` แปลงเป็น v2 ในที่เดิมโดยไม่ย้ายข้อมูล (ไฟล์ครบทุกไฟล์), `tools/myfs.py` อ่าน/เขียนได้ทั้งสองแบบ
+  - x86 ยังใช้ v1 อยู่
 
 ## เฟส 4: งานใหญ่
 
@@ -153,6 +158,18 @@
 - [ ] **4.6.4** เข้า WPA2-PSK ด้วย supplicant ในชิป, frame ข้อมูลเป็น netif ที่สองของ lwIP, DHCP client, `ping`
 - [ ] **4.6.5** คำสั่ง `wifi` ครบ (scan/connect/status/disconnect/forget), จำเครือข่ายใน `wifi.cfg`, ต่อเองตอนบูต, แอป `wifiman` เต็มจอ (โค้ดเสร็จ, ผ่าน QEMU, รอทดสอบบน Pi จริง)
 - [ ] **4.6.6** SDIO 50 MHz (high speed: ตอนนี้เขียนแล้ว CRC ผิด จึงใช้ 25 MHz), Wi-Fi บน Pi 4
+
+### 4.6 แอปและภาษาเพิ่ม (ให้รู้สึกเหมือน Ubuntu)
+- [x] **4.6.1** JavaScript: QuickJS เป็นแพ็กเกจ `node` (`pkg install nodejs` ก็ได้) REPL, `node -e/-p`, `node app.js`, ES module, `require('fs'/'path'/'os'/...)`
+  - เสร็จเมื่อ: `node -e "console.log(1+2)"` ได้ ✅ (tests/qemu_langs.py 17 ข้อ)
+- [x] **4.6.2** `sqlite3`: SQLite 3.54.1 + VFS บน MyFS + shell (`.tables .schema .mode box .import .dump ...`)
+  - เสร็จเมื่อ: สร้างตาราง ปิด เปิดใหม่ ข้อมูลยังอยู่ ✅
+- [x] **4.6.3** `chess` (C): หมากรุกกับคอม (alpha-beta, ตรวจ move generator ด้วย perft)
+- [x] **4.6.4** แอป Python: `bc`, `neofetch`, `cal`, `sl`, `sudoku`, `sokoban`, `invaders`
+- [x] **4.6.5** C library เพิ่ม: `inttypes.h`, `sys/time.h`, `fenv.h`, `clock_gettime`, `alloca`, หาร 128 บิต
+- [ ] **4.6.6** ภาษาเพิ่ม: Tcl (Jim Tcl), Scheme ตัว C, ...
+- [ ] **4.6.7** C compiler บน Pi (TinyCC มี backend ARM64) ให้เขียน C แล้วคอมไพล์บน MyOS ได้
+- [ ] **4.6.8** วันที่จริง: เอาเวลาจากคอมผ่าน USB network (HTTP `Date` / NTP) ให้ `cal`, `date`, `Date()` ถูก
 
 ---
 

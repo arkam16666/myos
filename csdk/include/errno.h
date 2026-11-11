@@ -12,6 +12,8 @@ extern int errno;
 #define ENOMEM  12
 #define EACCES  13
 #define EEXIST  17
+#define ENOTDIR 20
+#define EISDIR  21
 #define EINVAL  22
 #define ENFILE  23
 #define EMFILE  24
@@ -20,5 +22,7 @@ extern int errno;
 #define EDOM    33
 #define ERANGE  34
 #define ENOSYS  38
+#define ENOTEMPTY 39
+#define ETIMEDOUT 110
 
 #endif

@@ -1,4 +1,4 @@
-"""Test the programming-language packages in QEMU (Raspberry Pi 3B).
+"""Test the programming-language packages (and sqlite3, chess) in QEMU (Raspberry Pi 3B).
 
 Installs each language from its package and runs small programs in it.
 
@@ -71,6 +71,56 @@ TESTS = {
         ("forth", ["2 3 + .", ": square dup * ;  7 square .", ": count 5 0 do i . loop ; count",
                    "variable x 10 x ! 5 x +! x @ .", "foo", "bye"],
          ["5  ok", "49  ok", "0 1 2 3 4  ok", "15  ok", "unknown word: foo"], b"ok"),
+    ],
+    "node": [
+        ("node -v", [], ["(QuickJS)"]),
+        ("node -e \"console.log('hello', 1+2, {a:1, b:[1,2,3]}, [1,'x'], {}, 0.1+0.2)\"", [],
+         ['hello 3 { a: 1, b: [ 1, 2, 3 ] } [ 1, "x" ] {} 0.30000000000000004']),
+        ('node -p "[Math.max(3, 9, 2), Math.PI.toFixed(3), 2 ** 0.5, 7 % 3, Math.round(-2.5)]"', [],
+         ['[ 9, "3.142", 1.4142135623730951, 1, -2 ]']),
+        ("node -e \"class A { #x = 5; get x() { return this.#x } } class B extends A { toString() { return 'B' + this.x } }"
+         " console.log(String(new B()), JSON.stringify({q: [1, {r: 2}]}), Object.entries({k: 1}))\"", [],
+         ['B5 {"q":[1,{"r":2}]} [ [ "k", 1 ] ]']),
+        ("node -e \"const o = []; setTimeout(() => { o.push('C'); console.log(o.join('')) }, 50);"
+         " Promise.resolve().then(() => o.push('B')); o.push('A')\"", [], ["ABC"]),
+        ("node -e \"(async () => { await new Promise(r => setTimeout(r, 30)); console.log('async', 2n ** 70n) })()\"", [],
+         ["async 1180591620717411303424n"]),
+        ("node -e \"require('fs').writeFileSync('t.js', 'const l = require(`./lib`); console.log(l.hi(process.argv[2]), process.argv.length)')\"",
+         [], []),
+        ("node -e \"require('fs').writeFileSync('lib.js', 'exports.hi = n => `hi ${n}`')\"", [], []),
+        ("node t.js bob x", [], ["hi bob 4"]),
+        ("node -e \"const q = JSON.stringify; require('fs').writeFileSync('m.mjs', 'import { sq } from ' + q('./sq.mjs') +"
+         " '; import { existsSync } from ' + q('node:fs') + '; console.log(sq(9), existsSync(`m.mjs`)); await null; console.log(`tla`)')\"",
+         [], []),
+        ("node -e \"require('fs').writeFileSync('sq.mjs', 'export const sq = x => x * x')\"", [], []),
+        ("node m.mjs", [], ["81 true", "tla"]),
+        ("node -e \"function r(n) { return n ? r(n - 1) + 1 : 0 } console.log(r(2000)); try { r(1e6) } catch (e) { console.log(e.message) }\"",
+         [], ["2000", "stack overflow"]),
+        ("node -e \"let a = []; for (let i = 0; i < 100000; i++) a.push({i}); console.log(a.length, a[99999].i)\"", [],
+         ["100000 99999"]),
+        ("node -e \"null.x\"", [], ["Uncaught TypeError", "Program exited with code 1"]),
+        ("node -e \"console.log('Hi ' + prompt('Name? '))\"", ["Arka"], ["Hi Arka"], b"?"),
+        ("node", ["let x = 6 * 7", "x + 1", "[1, 2].map(n => n * x)", "await new Promise(r => setTimeout(() => r('done'), 20))",
+                  "nope()", ".exit"],
+         ["Welcome to JavaScript", "43", "[ 42, 84 ]", '"done"', "Uncaught ReferenceError"]),
+    ],
+    "sqlite3": [
+        ("sqlite3 shop.db \"CREATE TABLE fruit(id INTEGER PRIMARY KEY, name TEXT, price REAL)\""
+         " \"INSERT INTO fruit(name, price) VALUES ('apple', 1.5), ('banana', 0.25), ('mango', 3)\"", [], []),
+        ("sqlite3 -box shop.db \"SELECT name, price FROM fruit WHERE price > 1\"", [],
+         ["│ apple │   1.5 │", "│ mango │   3.0 │"]),
+        ("sqlite3 shop.db", [".mode csv", ".headers on", "SELECT count(*) AS n,", "sum(price) AS total FROM fruit;",
+                             ".once f.csv", "SELECT * FROM fruit;", ".import f.csv copy",
+                             "SELECT 'rows=' || count(*) FROM copy;", "SELEC 1;", ".quit"],
+         ["n,total", "3,4.75", "Imported 3 row(s) into copy", "rows=3", "Parse error"]),
+        ("sqlite3 :memory: \"SELECT sqrt(16), upper('abc'), json_array(1, 2), 7 / 2, typeof(7 / 2.0)\"", [],
+         ["4.0|ABC|[1,2]|3|real"]),
+        ("sqlite3 shop.db .dump", [], ["CREATE TABLE fruit", "INSERT INTO \"fruit\" VALUES(1,'apple',1.5);",
+                                       "CREATE TABLE \"copy\"", "COMMIT;"]),
+    ],
+    "chess": [
+        ("chess plain", ["e2e4", "moves", "e2e4", "level 1", "undo", "quit"],
+         ["MyOS Chess", "I play", "a2a3", "not a legal move", "Level 1"]),
     ],
 }
 

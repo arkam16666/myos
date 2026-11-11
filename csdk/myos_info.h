@@ -72,4 +72,17 @@ struct myos_wifi_connect {
     char password[64];      /* "" for an open network; 8-63 characters for WPA/WPA2 */
 };
 
+/* SYS_STAT (MyFS v2 folders) */
+struct myos_stat {
+    uint32_t type;          /* 1 file, 2 folder */
+    uint32_t size;          /* bytes */
+};
+
+/* SYS_READDIR: one thing in a folder */
+struct myos_dirent {
+    char name[64];          /* up to 63 characters */
+    uint32_t type;          /* 1 file, 2 folder */
+    uint32_t size;
+};
+
 #endif

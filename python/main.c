@@ -38,7 +38,7 @@ static void run_startup_code(void) {
     }
 }
 
-// copy the next space-separated word of *args into word[48]; false at the end
+// copy the next space-separated word of *args into word[256]; false at the end
 static bool next_word(const char **args, char *word) {
     const char *p = *args;
     while (*p == ' ') {
@@ -49,7 +49,7 @@ static bool next_word(const char **args, char *word) {
     }
     size_t n = 0;
     while (*p && *p != ' ') {
-        if (n < 47) {
+        if (n < 255) {
             word[n++] = *p;
         }
         p++;
@@ -60,7 +60,7 @@ static bool next_word(const char **args, char *word) {
 }
 
 static int run_script(const char *args) {
-    char script[48], word[48];
+    char script[256], word[256];
     next_word(&args, script);
     if (sys_file_size(script) < 0) {
         sys_print("python: can't open file '");

@@ -69,6 +69,15 @@ TESTS = {
     "htop":      ("htop", [3, DOWN, 1, "q"], ["MyOS htop", "CPU [", "Mem [", "PID TTY", "htop"]),
     "wifiman":   ("wifiman", [3, "q"], ["MyOS Wi-Fi manager", "no Wi-Fi chip"]),
     "rps":       ("rps", [line(c) for c in "rpsrpsrpsrpsrpsrpsrpsrpsrpsrps"] + [line("q")], ["score  you"]),
+    "neofetch":  ("neofetch", [], ["MyOS Pi (ARM64)", "Memory", "MiB /", "MicroPython"]),
+    "cal":       ("cal 11 2026", [], ["November 2026", "29 30", "B.E. 2569"]),
+    "sl":        ("sl", [], ["(O)"]),
+    "sudoku":    ("sudoku", [1, "h", "5", "c", "q"], ["SUDOKU", "Hint:"]),
+    "sokoban":   ("sokoban", [1, "a", 1, "q"], ["SOKOBAN  level 1/9", "Level solved"]),
+    "invaders":  ("invaders", [1, " ", LEFT, " ", 1, "q"], ["INVADERS", "score"]),
+    "bc":        ("bc", [line("2^100"), line("scale=20; 1/7"), line("define f(n) {"), line("if (n < 2) return (n)"),
+                         line("return (f(n-1) + f(n-2)) }"), line("f(20)"), line("obase=16; 255"), line("quit")],
+                  ["1267650600228229401496703205376", ".14285714285714285714", "6765", "FF"]),
 }
 # a second command run after the app, and what it must print
 AFTER = {
@@ -76,6 +85,8 @@ AFTER = {
     "todo":  ("todo done 1", ["[x] Buy milk"]),
     "units": ("units 100 c f", ["100 c = 212 f"]),
     "primes": ("primes is 91", ["91 = 7 x 13"]),
+    "cal":    ("cal 2026", ["2026  (B.E. 2569)", "December"]),
+    "bc":     ("bc -l \"scale=20; 4*a(1)\"", ["3.14159265358979323844"]),
 }
 
 

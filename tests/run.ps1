@@ -24,6 +24,8 @@ python tests\qemu_langs.py
 $langs = $LASTEXITCODE
 python tests\qemu_multi.py
 $multi = $LASTEXITCODE
+python tests\qemu_fs.py
+$fs = $LASTEXITCODE
 
-if ($x86 -or $arm -or $apps -or $langs -or $multi) { Write-Host "SOME TESTS FAILED" -ForegroundColor Red; exit 1 }
+if ($x86 -or $arm -or $apps -or $langs -or $multi -or $fs) { Write-Host "SOME TESTS FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "ALL TESTS PASSED" -ForegroundColor Green

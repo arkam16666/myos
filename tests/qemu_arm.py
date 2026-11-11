@@ -46,7 +46,7 @@ SD = [
     ("sd info",         "sd",                     ["SD card:", "64 MB", "on SDHOST", "myfs.img: sectors 4099-20482"]),
     ("raw sector",      "hexdump 2048",           ["Sector 2048", "MYOS"]),
     ("ls",              "ls",                     ["readme.txt", "hello.py", "2 file(s)"]),
-    ("df",              "df -h",                  ["Size   Used  Avail  Use%  Files", "myfs.img", "/64  /"]),
+    ("df",              "df -h",                  ["Size   Used  Avail  Use%  Files", "myfs.img"]),
     ("cat (from PC)",   "cat readme.txt",         ["Welcome to MyOS!"]),
     ("write",           "write pi.txt made on a pi", ["Wrote 13 bytes to pi.txt"]),
     ("cat (own file)",  "cat pi.txt",             ["made on a pi"]),
@@ -161,13 +161,10 @@ def check_with_myfs_py(card, lba, sectors):
     out = os.path.join(os.path.dirname(card), "myfs-after.img")
     mksdimg.read_myfs(card, lba, sectors, out)
     disk = myfs.Disk(out)
-    _, entries = myfs.load(disk)
-    names = {e["name"]: e for e in entries if e["flags"] & 1}
-    data = b""
-    if "pi.txt" in names:
-        e = names["pi.txt"]
-        data = disk.read(e["start"], e["alloc"])[:e["size"]]
-    disk.f.close()
+    fs = myfs.open_fs(disk)
+    names = {n for n, _, _ in fs.listdir("/")}
+    data = fs.read("/pi.txt") if "pi.txt" in names else b""
+    disk.close()
     ok = data == b"made on a pi\n" and "hello.py" not in names and "readme.txt" in names
     print(f"{'PASS' if ok else 'FAIL'}  raspi3b  myfs.py reads what MyOS wrote"
           + ("" if ok else f"   (files: {sorted(names)}, pi.txt = {data!r})"))

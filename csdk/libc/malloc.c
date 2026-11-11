@@ -139,3 +139,9 @@ void *realloc(void *p, size_t n) {
     free(p);
     return q;
 }
+
+/* how much the block really holds (QuickJS uses it to count its memory) */
+size_t malloc_usable_size(void *p) {
+    if (!p) return 0;
+    return ((block_t *)((char *)p - sizeof(block_t)))->size - sizeof(block_t);
+}

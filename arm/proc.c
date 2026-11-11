@@ -134,6 +134,7 @@ void proc_init(void) {
 }
 
 proc_t *proc_current(void) { return cur; }
+const char *proc_cwd(void) { return cur->cwd[0] ? cur->cwd : "/"; }
 proc_t *proc_slot(int i) { return (i >= 0 && i < NPROC) ? &procs[i] : 0; }
 
 proc_t *proc_by_pid(int pid) {
@@ -318,18 +319,24 @@ int proc_spawn(const char *name, const char *args, int background) {
     data_clean_and_invalidate(p->l2, 4096);
 
     // its name in ps/htop: the program, or for "python app.py" the app
+    // (without the folders: "/apps/snake.py" -> "snake")
     const char *s = name;
+    for (const char *q = name; *q; q++) if (*q == '/') s = q + 1;
     int k = 0;
-    if (strcmp(name, "python") == 0) {
-        const char *e = args;
-        while (*e && *e != ' ') e++;
-        if (e - args > 3 && memcmp(e - 3, ".py", 3) == 0) {
-            for (const char *q = args; q < e - 3 && k < 15; q++) p->name[k++] = *q;
+    if (strcmp(s, "python") == 0) {
+        const char *e = args, *b = args;
+        while (*e && *e != ' ') {
+            if (*e == '/') b = e + 1;
+            e++;
+        }
+        if (e - b > 3 && memcmp(e - 3, ".py", 3) == 0) {
+            for (const char *q = b; q < e - 3 && k < 15; q++) p->name[k++] = *q;
             s = "";
         }
     }
     while (*s && k < 15) p->name[k++] = *s++;
     p->name[k] = 0;
+    strcpy(p->cwd, cur->cwd);                               // starts in its shell's folder
     p->pid = next_pid++;
     p->entry = entry;
     p->background = background;
