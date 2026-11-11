@@ -4,6 +4,7 @@ usage: python tests/qemu_multi.py
 """
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -14,8 +15,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import mksdimg  # noqa: E402
 
-QEMU = r"C:\Program Files\qemu\qemu-system-aarch64.exe"
-PORT = 45485
+QEMU = (shutil.which("qemu-system-aarch64")
+        or r"C:\Program Files\qemu\qemu-system-aarch64.exe")
+def _free_port():           # a port nobody uses, so several test runs can go at once
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+PORT = int(os.environ.get("MYOS_TEST_PORT", 0)) or _free_port()
 SPIN = "local t=os.clock() while os.clock()-t < %d do end print('%s')"
 
 
