@@ -14,11 +14,58 @@
 #include "myos.h"
 
 #if defined(__aarch64__)
-// MyOS Pi gives every program 32 MB at 0x02000000 (arm/user.h USER_HEAP), mapped
-// 2 MB at a time when first touched; this port doesn't use csdk's malloc, so
-// the Python heap takes 28 MB of it (it used to be 512 KB inside the program)
-#define PY_HEAP_START ((char *)0x02000000UL)
-#define PY_HEAP_SIZE  (28u * 1024 * 1024)
+// MyOS Pi: a program gets one 2 MB block for its code, data and stack, and up
+// to 32 MB more at 0x02000000 (arm/user.h USER_HEAP), handed out 2 MB at a time
+// when first touched. The Python heap starts as 1 MB inside the program's own
+// block, so small programs (htop ...) take just that one 2 MB block; when it's
+// full the GC adds bigger areas from the 0x02000000 region (split heap, see
+// mpconfigport.h), up to ~33 MB in all. Empty areas go back for reuse.
+static char heap[1024 * 1024];
+#define PY_HEAP_START heap
+#define PY_HEAP_SIZE  sizeof(heap)
+
+#define REGION_START 0x02000000UL
+#define REGION_END   0x04000000UL
+#define NAREAS       32
+static struct { uintptr_t start, size; int used; } areas[NAREAS];
+static int nareas;                          // slots in use, in address order
+static uintptr_t region_top = REGION_START; // everything above is untouched
+
+void *myos_heap_alloc(size_t size) {
+    size = (size + 4095) & ~(size_t)4095;
+    for (int i = 0; i < nareas; i++) {      // an area given back earlier
+        if (!areas[i].used && areas[i].size >= size) {
+            areas[i].used = 1;
+            return (void *)areas[i].start;
+        }
+    }
+    if (nareas == NAREAS || size > REGION_END - region_top) return NULL;
+    areas[nareas].start = region_top;
+    areas[nareas].size = size;
+    areas[nareas].used = 1;
+    nareas++;
+    region_top += size;
+    return (void *)(region_top - size);
+}
+
+void myos_heap_free(void *p) {
+    for (int i = 0; i < nareas; i++) {
+        if (areas[i].start == (uintptr_t)p) areas[i].used = 0;
+    }
+    while (nareas && !areas[nareas - 1].used) {     // the top one(s): back to untouched
+        nareas--;
+        region_top = areas[nareas].start;
+    }
+}
+
+// the biggest area the GC could add now
+size_t gc_get_max_new_split(void) {
+    size_t best = REGION_END - region_top;
+    for (int i = 0; i < nareas; i++) {
+        if (!areas[i].used && areas[i].size > best) best = areas[i].size;
+    }
+    return best;
+}
 #else
 static char heap[MICROPY_HEAP_SIZE];        // MyOS PC: no such region
 #define PY_HEAP_START heap

@@ -3,6 +3,17 @@
 
 #define MICROPY_CONFIG_ROM_LEVEL          (MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES)
 
+#if defined(__aarch64__)
+// the heap starts at 1 MB inside the program and grows by itself (main.c)
+#include <stddef.h>
+#define MICROPY_GC_SPLIT_HEAP             (1)
+#define MICROPY_GC_SPLIT_HEAP_AUTO        (1)
+void *myos_heap_alloc(size_t size);
+void myos_heap_free(void *p);
+#define MP_PLAT_ALLOC_HEAP(size)          myos_heap_alloc(size)
+#define MP_PLAT_FREE_HEAP(ptr)            myos_heap_free(ptr)
+#endif
+
 // extra modules (sources in extmod/)
 #define MICROPY_PY_RANDOM                 (1)
 #define MICROPY_PY_RANDOM_EXTRA_FUNCS     (1)   // randint, choice, ...
