@@ -1,4 +1,4 @@
-"""Test the programming-language packages (and sqlite3) in QEMU (Raspberry Pi 3B).
+"""Test the programming-language packages (and sqlite3, chess) in QEMU (Raspberry Pi 3B).
 
 Installs each language from its package and runs small programs in it.
 
@@ -117,6 +117,10 @@ TESTS = {
          ["4.0|ABC|[1,2]|3|real"]),
         ("sqlite3 shop.db .dump", [], ["CREATE TABLE fruit", "INSERT INTO \"fruit\" VALUES(1,'apple',1.5);",
                                        "CREATE TABLE \"copy\"", "COMMIT;"]),
+    ],
+    "chess": [
+        ("chess plain", ["e2e4", "moves", "e2e4", "level 1", "undo", "quit"],
+         ["MyOS Chess", "I play", "a2a3", "not a legal move", "Level 1"]),
     ],
 }
 
