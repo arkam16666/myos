@@ -150,7 +150,7 @@ def main():
         check("awk", f"sum {want}" in out, out)
         out = run("md5sum notes.txt")
         check("md5sum", hashlib.md5(NOTES.encode()).hexdigest() in out, out)
-        out = run("busybox ls -l")
+        out = run("busybox ls -l /bin/busybox notes.txt")       # (programs in /bin, files in /home)
         check("ls -l", re.search(r"-rwxr-xr-x\s+1 0\s+0\s+1115944 .*busybox", out) is not None
               and "notes.txt" in out, out)
         out = run("sh -c 'cut -d\" \" -f3 notes.txt | sort | uniq -c | sort -rn | head -1'")

@@ -14,7 +14,9 @@
 //            unpacked from '/'; the files it put down are listed in
 //            /var/lib/pkg/NAME.list (for 'pkg remove'). Big ones are fine: the
 //            package and the unpacked tar get memory from the program pool.
-// Files the package manager keeps in MyFS:
+// Where things go (layout.h): programs and apps in /bin, .pkg files sent from
+// the PC in /var/cache/pkg, pkg's own files in /var/lib/pkg (all in "/" on an
+// old MyFS v1 disk):
 //   pkg.idx  the repository list from 'pkg update'
 //            one line per package: name version kind size sha256 description
 //   pkg.db   installed packages: one "name version" line each
@@ -22,6 +24,7 @@
 #include <string.h>
 #include "console.h"
 #include "http.h"
+#include "layout.h"
 #include "myfs.h"
 #include "pkg.h"
 #include "print.h"
@@ -49,8 +52,8 @@
 #define PKG_MAX   (0x00800000 - 0x1000)     // (up to IDX_BUF; Linux programs can be big)
 #define IDX_BUF   ((char *)0x01800000)      // the repository list while working on it
 #define IDX_MAX   (64 * 1024)
-#define IDX_FILE  "pkg.idx"
-#define DB_FILE   "pkg.db"
+#define IDX_FILE  sys_file(F_PKG_IDX)
+#define DB_FILE   sys_file(F_PKG_DB)
 
 static const char usage[] =
     "Usage: pkg list | update | search [WORD] | info NAME | install NAME...\n"
@@ -96,6 +99,26 @@ static int buf_for(uint32_t size) {
     pkg_buf = (uint8_t *)big_mem;
     pkg_max = (uint32_t)big_blocks * PROC_BLOCK;
     return 1;
+}
+
+// NAME.pkg in the package cache (/var/cache/pkg; "/" on a v1 disk)
+static void cache_pkg(const char *name, char *out) {
+    strcpy(out, layout_v2() ? PKG_CACHE_DIR "/" : "/");
+    strcat(out, name);
+    strcat(out, ".pkg");
+}
+
+// a NAME.pkg on the disk: in the cache, the current folder, or "/"; 1 if found
+static int local_pkg(const char *name, char *out) {
+    char rel[24];
+    strcpy(rel, name);
+    strcat(rel, ".pkg");
+    cache_pkg(name, out);
+    if (myfs_stat(out, 0) == MYFS_FILE) return 1;
+    if (myfs_normalize(proc_cwd(), rel, out) == 0 && myfs_stat(out, 0) == MYFS_FILE) return 1;
+    strcpy(out, "/");
+    strcat(out, rel);
+    return myfs_stat(out, 0) == MYFS_FILE;
 }
 
 static void list_path(const char *name, char *out) {       // "/var/lib/pkg/NAME.list"
@@ -197,10 +220,13 @@ static void db_unset(const char *name) {
 }
 
 static int installed(const char *name) {
-    char v[16], py[24], list[48];
+    char v[16], py[24], list[48], bin[MYFS_PATH_MAX], binpy[MYFS_PATH_MAX];
     py_name(name, py);
     list_path(name, list);
-    return myfs_size(name) >= 0 || (db_version(name, v) && (myfs_size(py) >= 0 || myfs_size(list) >= 0));
+    bin_file(name, bin);
+    bin_file(py, binpy);
+    return myfs_size(bin) >= 0 || myfs_size(name) >= 0 ||
+           (db_version(name, v) && (myfs_size(binpy) >= 0 || myfs_size(py) >= 0 || myfs_size(list) >= 0));
 }
 
 // ------------------------------------------------ pkg.idx: the repository list
@@ -281,8 +307,13 @@ static void pkg_list(void) {
     uint32_t size;
     int found = 0;
     console_puts("  NAME          VERSION  STATUS      DESCRIPTION\n");
-    for (int i = 0; myfs_entry(i, file, &size) == 0; i++) {     // package files on the disk
-        if (!ends_with_pkg(file) || !read_header(file)) continue;
+    const char *cache = layout_v2() ? PKG_CACHE_DIR : "/";
+    for (int i = 0; myfs_readdir(cache, i, file, &size) > 0; i++) {     // package files on the disk
+        char full[MYFS_PATH_MAX];
+        strcpy(full, cache);
+        if (strcmp(cache, "/")) strcat(full, "/");
+        strcat(full, file);
+        if (!ends_with_pkg(file) || !read_header(full)) continue;
         found++;
         const char *name = (const char *)&hdr[P_NAME];
         char v[16];
@@ -298,12 +329,11 @@ static void pkg_list(void) {
     }
     db_load();                                                  // installed from the PC
     for (const char *p = db; *p; ) {
-        char name[16], version[16], pkgfile[24];
+        char name[16], version[16], pkgfile[MYFS_PATH_MAX];
         p = word(p, name, sizeof name);
         p = word(p, version, sizeof version);
         while (*p == '\n' || *p == ' ') p++;
-        strcpy(pkgfile, name);
-        strcat(pkgfile, ".pkg");
+        cache_pkg(name, pkgfile);
         if (myfs_size(pkgfile) >= 0) continue;                  // already listed above
         found++;
         entry_t e;
@@ -328,8 +358,8 @@ static void pkg_list(void) {
 // A list from the internet must carry a valid Ed25519 signature
 // (index.sig, made by tools/repo.py with the repository key).
 #define DEFAULT_REPO "https://raw.githubusercontent.com/arkam16666/myos/packages/"
-#define SRC_FILE  "pkg.src"
-#define FROM_FILE "pkg.from"
+#define SRC_FILE  sys_file(F_PKG_SRC)
+#define FROM_FILE sys_file(F_PKG_FROM)
 
 static char repo_base[200];                 // "" = the PC over USB
 
@@ -506,18 +536,16 @@ static void pkg_search(const char *w) {
 }
 
 static void pkg_info(const char *name) {
-    char file[MYFS_NAME_MAX + 1], v[16];
+    char file[MYFS_PATH_MAX], v[16];
     entry_t e;
     if (!valid_prog_name(name)) {
         console_puts(usage);
         return;
     }
-    strcpy(file, name);
-    strcat(file, ".pkg");
     const char *version, *desc;
     uint32_t size;
     int kind;
-    if (read_header(file)) {
+    if (local_pkg(name, file) && read_header(file)) {
         version = (const char *)&hdr[P_VERSION];
         desc = (const char *)&hdr[P_DESC];
         size = rd32(&hdr[P_SIZE]);
@@ -700,7 +728,7 @@ static int install_buffer(uint32_t total, int depth) {
         console_puts(bad);
         return 0;
     }
-    char prog[16], version[16], file[24];
+    char prog[16], version[16], file[MYFS_PATH_MAX], py[24], pybin[MYFS_PATH_MAX];
     memcpy(prog, pkg_buf + P_NAME, 15);
     prog[15] = 0;
     memcpy(version, pkg_buf + P_VERSION, 15);
@@ -730,16 +758,17 @@ static int install_buffer(uint32_t total, int depth) {
             console_puts(bad);
             return 0;
         }
-        strcpy(file, prog);
+        bin_file(prog, file);
     } else if (kind == KIND_LINUX) {
         const uint8_t *elf = pkg_buf + HDR_SIZE;        // ELF64, little endian, machine 183 = AArch64
         if (size < 64 || memcmp(elf, "\177ELF", 4) != 0 || elf[4] != 2 || elf[5] != 1 || elf[18] != 183) {
             console_puts("That package is not a 64-bit ARM Linux program.\n");
             return 0;
         }
-        strcpy(file, prog);
+        bin_file(prog, file);
     } else {
-        py_name(prog, file);
+        py_name(prog, py);
+        bin_file(py, file);
     }
     console_puts("Installing ");
     console_puts(prog);
@@ -753,7 +782,8 @@ static int install_buffer(uint32_t total, int depth) {
     db_set(prog, version);
     char pv[16];
     if (kind == KIND_PYTHON &&                          // dependency: python 1.3+ (myos module)
-        (myfs_size("python") < 0 || !db_version("python", pv) || strcmp(pv, "1.3") < 0)) {
+        (bin_file("python", pybin), myfs_size(pybin) < 0 && myfs_size("python") < 0 ||
+         !db_version("python", pv) || strcmp(pv, "1.3") < 0)) {
         console_puts(prog);
         console_puts(" is a Python app; it needs python 1.3 or newer.\n");
         if (!install("python", 0, depth + 1)) return 0;
@@ -766,14 +796,14 @@ static int install_buffer(uint32_t total, int depth) {
 
 // from_repo: 1 = always download (upgrade), 0 = use NAME.pkg on the disk if there
 static int install(const char *name, int from_repo, int depth) {
-    char file[MYFS_NAME_MAX + 1];
+    char file[MYFS_PATH_MAX], repo_file[24];
     if (!valid_prog_name(name) || depth > 2) {
         console_puts(usage);
         return 0;
     }
-    strcpy(file, name);
-    strcat(file, ".pkg");
-    int32_t total = myfs_size(file);
+    strcpy(repo_file, name);
+    strcat(repo_file, ".pkg");
+    int32_t total = local_pkg(name, file) ? myfs_size(file) : -1;
     entry_t e;
     int in_repo = idx_load() && idx_find(name, &e);
     // a package file on the disk is used unless the repository has another version
@@ -809,7 +839,7 @@ static int install(const char *name, int from_repo, int depth) {
     uint32_t len;
     read_line_file(FROM_FILE, repo_base, sizeof repo_base);   // where the list came from
     if (!buf_for(e.size + 1)) return 0;
-    int r = fetch_from(repo_base, file, pkg_buf, pkg_max, &len);
+    int r = fetch_from(repo_base, repo_file, pkg_buf, pkg_max, &len);
     if (r < 0) {
         say_http_error(r);
         buf_release();
@@ -914,10 +944,13 @@ static void pkg_remove(const char *name) {
         console_puts("Usage: pkg remove NAME\n");
         return;
     }
-    int done = myfs_remove(name) == 0;
+    char bin[MYFS_PATH_MAX], binpy[MYFS_PATH_MAX];
+    bin_file(name, bin);
+    int done = myfs_remove(bin) == 0 || myfs_remove(name) == 0;
     py_name(name, py);
+    bin_file(py, binpy);
     if (db_version(name, v)) {                          // only scripts pkg put there
-        if (myfs_remove(py) == 0) done = 1;
+        if (myfs_remove(binpy) == 0 || myfs_remove(py) == 0) done = 1;
         if (remove_tree(name)) done = 1;
         db_unset(name);
     }
@@ -961,8 +994,10 @@ static void pkg_upgrade(void) {
 int pkg_python_app(const char *name) {                  // installed Python app called NAME?
     char py[24], v[16];
     if (!valid_prog_name(name)) return 0;
+    char binpy[MYFS_PATH_MAX];
     py_name(name, py);
-    return myfs_size(py) >= 0 && db_version(name, v);
+    bin_file(py, binpy);
+    return (myfs_size(binpy) >= 0 || myfs_size(py) >= 0) && db_version(name, v);
 }
 
 void pkg_command(const char *args) {

@@ -19,12 +19,13 @@
 #include "rng.h"
 #include "sha256.h"
 #include "ssh.h"
+#include "layout.h"
 #include "timer.h"
 
 #define SSH_PORT        22
 #define SERVER_VERSION  "SSH-2.0-MyOS_0.6"
-#define HOSTKEY_FILE    "ssh_host_ed25519.key"
-#define PASSWORD_FILE   "ssh_password"
+#define HOSTKEY_FILE    sys_file(F_SSH_KEY)        // /etc/ssh/... (layout.h)
+#define PASSWORD_FILE   sys_file(F_SSH_PASSWORD)
 #define RX_SIZE         (20 * 1024)     // bytes from the client not yet handled
 #define MAX_PACKET      (18 * 1024)     // biggest packet accepted
 #define OUR_WINDOW      8192            // how much the client may send before we say "more"

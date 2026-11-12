@@ -30,6 +30,10 @@ QEMU = (shutil.which("qemu-system-aarch64")
         or r"C:\Program Files\qemu\qemu-system-aarch64.exe")
 IMAGE = "arm/build/kernel8-qemu.img"
 PACKAGES = os.path.join(ROOT, "arm", "build", "packages")
+# folders MyOS makes on a v2 disk (arm/layout.c): /bin /etc /etc/ssh /home /lib
+# /lib/firmware /tmp /usr /usr/bin /usr/lib /var /var/lib /var/lib/pkg
+# /var/lib/myos /var/cache /var/cache/pkg
+LAYOUT_DIRS = 16
 PROMPT = re.compile(r"(myos(:[^\s>]*)?|>>)> $")
 
 
@@ -134,7 +138,7 @@ SCRIPT_CLEAN = b"""import os
 for n in os.listdir("py"):
     os.remove("py/" + n)
 os.rmdir("py")
-os.remove("renamed.txt")
+os.remove("/renamed.txt")
 print("cleaned", "py" in os.listdir())
 """
 
@@ -191,7 +195,8 @@ def expand_test(P, tmp, card_mb, fill_mb, check_on_pc):
     pi = Pi(card)
     try:
         out = pi.read_prompt(30)
-        check(P, "after reboot: partition 2", f"MyFS mounted from partition 2, {n + 1} file(s), 1 folder(s)" in out, out)
+        check(P, "after reboot: partition 2",
+              f"MyFS mounted from partition 2, {n + 2} file(s), {1 + LAYOUT_DIRS} folder(s)" in out, out)
         expect(P, pi, "sd", "sd", ["MyFS on:  partition 2", f"({part_mb} MB)", "v2"])
         expect(P, pi, "still there", "cat big/new.txt", ["on the partition"])
         out = expect(P, pi, "free space", "df", ["sd-part2"])
@@ -203,7 +208,7 @@ def expand_test(P, tmp, card_mb, fill_mb, check_on_pc):
     check(P, "MBR: partition 2 is type 0xDA", mbr[446 + 16 + 4] == 0xDA, mbr[446 + 16 + 4])
     if check_on_pc:
         check_files(P, read_part(card, layout["second"], os.path.join(tmp, f"{P.lower()}-p2.img")), want,
-                    {"/big/new.txt": b"on the partition\n"})
+                    {"/home/big/new.txt": b"on the partition\n"}, "/home/")
     return card
 
 
@@ -221,32 +226,33 @@ def part_g(tmp):
 def part_a(tmp):
     card = os.path.join(tmp, "a.img")
 
-    def setup(fs):
-        fs.write("/readme.txt", open(os.path.join(ROOT, "files", "readme.txt"), "rb").read())
-        fs.write("/python.pkg", open(os.path.join(PACKAGES, "python.pkg"), "rb").read())
-        fs.write("/mk.py", SCRIPT_MK)
-        fs.write("/clean.py", SCRIPT_CLEAN)
-        fs.mkdir("/docs")
-        fs.write("/docs/pc.txt", b"made on the PC\n")
-        fs.mkdir("/many")
+    def setup(fs):                  # in /home, where the shell starts (layout.c)
+        fs.mkdir("/home")
+        fs.write("/home/readme.txt", open(os.path.join(ROOT, "files", "readme.txt"), "rb").read())
+        fs.write("/home/python.pkg", open(os.path.join(PACKAGES, "python.pkg"), "rb").read())
+        fs.write("/home/mk.py", SCRIPT_MK)
+        fs.write("/home/clean.py", SCRIPT_CLEAN)
+        fs.mkdir("/home/docs")
+        fs.write("/home/docs/pc.txt", b"made on the PC\n")
+        fs.mkdir("/home/many")
         for i in range(500):
-            fs.write(f"/many/n{i:03d}.txt", f"file {i}\n".encode())
+            fs.write(f"/home/many/n{i:03d}.txt", f"file {i}\n".encode())
 
     layout = mksdimg.build(card, [], setup=setup)
-    files = 5 + 500
+    files = 5 + 500 + 1                         # + /var/lib/myos/layout
     P = "A"
     pi = Pi(card)
     try:
         out = pi.read_prompt(15)
-        check(P, "boot: v2 mounted", f"MyFS mounted from myfs.img, {files} file(s), 2 folder(s)" in out, out)
+        check(P, "boot: v2 mounted", f"MyFS mounted from myfs.img, {files} file(s), {2 + LAYOUT_DIRS} folder(s)" in out, out)
         expect(P, pi, "ls shows folders", "ls", ["docs/", "many/", "<folder>", "4 file(s), 2 folder(s)"])
         expect(P, pi, "500 files from the PC", "ls many", ["n000.txt", "n499.txt", "500 file(s)"], 20)
         expect(P, pi, "cat with a path", "cat many/n499.txt", ["file 499"])
-        expect(P, pi, "cat in a folder", "cat /docs/pc.txt", ["made on the PC"])
-        expect(P, pi, "sd says v2", "sd", ["MyFS:     v2, 505 file(s), 2 folder(s)"])
+        expect(P, pi, "cat in a folder", "cat /home/docs/pc.txt", ["made on the PC"])
+        expect(P, pi, "sd says v2", "sd", [f"MyFS:     v2, {files} file(s), {2 + LAYOUT_DIRS} folder(s)"])
         expect(P, pi, "mkdir", "mkdir games", [], absent=["Bad", "No such", "exists"])
-        expect(P, pi, "cd", "cd games", ["myos:/games> "])
-        expect(P, pi, "pwd", "pwd", ["/games\n"])
+        expect(P, pi, "cd", "cd games", ["myos:~/games> "])
+        expect(P, pi, "pwd", "pwd", ["/home/games\n"])
         expect(P, pi, "write in a folder", "write note.txt hello folder", ["Wrote 13 bytes to note.txt"])
         expect(P, pi, "ls here", "ls", ["note.txt", "1 file(s)"])
         expect(P, pi, "cd ..", "cd ..", ["myos> "])
@@ -254,7 +260,7 @@ def part_a(tmp):
         expect(P, pi, "mkdir -p", "mkdir -p a/b/c", [], absent=["Bad", "No such"])
         expect(P, pi, "tree", "tree a", ["/a\n", "  b/", "    c/", "0 file(s), 2 folder(s)"])
         expect(P, pi, "cp into a folder", "cp games/note.txt a/b/c", [], absent=["No such", "Bad"])
-        expect(P, pi, "copy is there", "cat /a/b/c/note.txt", ["hello folder"])
+        expect(P, pi, "copy is there", "cat /home/a/b/c/note.txt", ["hello folder"])
         expect(P, pi, "mv a file", "mv a/b/c/note.txt moved.txt", [], absent=["No such", "Bad"])
         expect(P, pi, "moved", "cat moved.txt", ["hello folder"])
         expect(P, pi, "old place empty", "ls a/b/c", ["(no files)"])
@@ -271,23 +277,25 @@ def part_a(tmp):
         long63 = "n" * 59 + ".txt"
         expect(P, pi, "63-char name", f"write {long63} long", [f"Wrote 5 bytes to {long63}"])
         expect(P, pi, "64-char name refused", f"write {long63}x long", ["Bad name"])
-        expect(P, pi, "cd into folder via ..", "cd /a/b", ["myos:/a/b> "])
+        expect(P, pi, "cd into folder via ..", "cd /home/a/b", ["myos:~/a/b> "])
         expect(P, pi, "ls ..", "ls ..", ["b/", "0 file(s), 1 folder(s)"])
-        expect(P, pi, "rmdir where you are", "rmdir /a/b", ["inside that folder"])
-        expect(P, pi, "cd alone = /", "cd", ["myos> "])
+        expect(P, pi, "rmdir where you are", "rmdir /home/a/b", ["inside that folder"])
+        expect(P, pi, "cd alone = home", "cd", ["myos> "])
+        expect(P, pi, "cd /", "cd /", ["myos:/> "])
+        expect(P, pi, "cd ~", "cd ~", ["myos> "])
         expect(P, pi, "install python", "pkg install python", ["Done."], 20)
         free0 = free_kb(pi.cmd("ls"))
         out = expect(P, pi, "python makes 500 files", "python mk.py",
-                     ["made 500", "cwd /py", "size 7", "isdir True", "content True", "rmdir refused"], 180)
+                     ["made 500", "cwd /home/py", "size 7", "isdir True", "content True", "rmdir refused"], 180)
         expect(P, pi, "500 files in py", "ls py", ["499 file(s)", "f499.txt"], 30)
-        expect(P, pi, "fsck with a big folder", "fsck", ["No problems found.", "1009 file(s)"], 30)
+        expect(P, pi, "fsck with a big folder", "fsck", ["No problems found.", f"{files + 504} file(s)"], 30)
         expect(P, pi, "ls one file", "ls docs/pc.txt", ["docs/pc.txt", "15 bytes"])
         free1 = free_kb(pi.cmd("ls"))
         check(P, "files take space", 0 < free1 < free0 - 100, (free0, free1))
         expect(P, pi, "python removes them", "python clean.py", ["cleaned False"], 180)
         free2 = free_kb(pi.cmd("ls"))
         check(P, "space given back (500 files)", free2 == free0, (free0, free2))
-        expect(P, pi, "cp a big file", "cp python big1", [], 20, absent=["No such", "full"])
+        expect(P, pi, "cp a big file", "cp /bin/python big1", [], 20, absent=["No such", "full"])
         expect(P, pi, "cp again", "cp big1 docs/big2", [], 20, absent=["No such", "full"])
         free3 = free_kb(pi.cmd("ls"))
         size = os.path.getsize(os.path.join(PACKAGES, "python.pkg")) - 128
@@ -303,11 +311,11 @@ def part_a(tmp):
         expect(P, pi, "fsck", "fsck", ["No problems found."], 30)
         expect(P, pi, "df", "df", ["myfs.img", "Use%"])
         expect(P, pi, "python os.listdir(path)", "python", [">>> "], 5)
-        expect(P, pi, "listdir", "import os; sorted(os.listdir('/docs'))", ["['pc.txt']"])
-        expect(P, pi, "getcwd", "os.chdir('docs'); os.getcwd()", ["'/docs'"])
+        expect(P, pi, "listdir", "import os; sorted(os.listdir('/home/docs'))", ["['pc.txt']"])
+        expect(P, pi, "getcwd", "os.chdir('docs'); os.getcwd()", ["'/home/docs'"])
         expect(P, pi, "open relative", "open('pc.txt').read()", ["made on the PC"])
-        expect(P, pi, "stat dir", "os.stat('/many')[0] == 0o040755", ["True"])
-        expect(P, pi, "mkdir error", "os.mkdir('/docs')", ["OSError", "17"])
+        expect(P, pi, "stat dir", "os.stat('/home/many')[0] == 0o040755", ["True"])
+        expect(P, pi, "mkdir error", "os.mkdir('/home/docs')", ["OSError", "17"])
         expect(P, pi, "leave python", "exit()", ["myos> "], 5)
     finally:
         pi.close()
@@ -315,7 +323,8 @@ def part_a(tmp):
     pi = Pi(card)                                   # reboot: everything still there?
     try:
         out = pi.read_prompt(15)
-        check(P, "after reboot", "MyFS mounted from myfs.img, 509 file(s), 4 folder(s)" in out, out)
+        check(P, "after reboot", f"MyFS mounted from myfs.img, {files + 4} file(s), {4 + LAYOUT_DIRS} folder(s)"
+              in out, out)
         expect(P, pi, "file survives", "cat moved.txt", ["shorter"])
         expect(P, pi, "folder survives", "ls many", ["500 file(s)"], 20)
         expect(P, pi, "fsck after reboot", "fsck", ["No problems found."], 30)
@@ -326,11 +335,11 @@ def part_a(tmp):
     disk = myfs.Disk(img)
     fs = myfs.open_fs(disk)
     rep = fs.check(fix=False)
-    ok = (fs.read("/moved.txt") == b"shorter\n" and fs.listdir("/a/b") == []
-          and len(fs.listdir("/many")) == 500 and fs.read("/docs/pc.txt") == b"made on the PC\n"
-          and ("n" * 59 + ".txt") in [n for n, _, _ in fs.listdir("/")]
+    ok = (fs.read("/home/moved.txt") == b"shorter\n" and fs.listdir("/home/a/b") == []
+          and len(fs.listdir("/home/many")) == 500 and fs.read("/home/docs/pc.txt") == b"made on the PC\n"
+          and ("n" * 59 + ".txt") in [n for n, _, _ in fs.listdir("/home")]
           and not rep["damaged"] and rep["leaked_kb"] == 0 and rep["missing_kb"] == 0)
-    check(P, "myfs.py reads what MyOS wrote", ok, (rep, fs.listdir("/")))
+    check(P, "myfs.py reads what MyOS wrote", ok, (rep, fs.listdir("/home")))
     disk.close()
 
 
@@ -353,10 +362,11 @@ def v1_files(fs, tmp):
     return want
 
 
-def check_files(part, img, want, extra):
+def check_files(part, img, want, extra, where="/"):
+    """want: files that must be in folder `where` (/home/ once MyOS tidied the disk up)"""
     disk = myfs.Disk(img)
     fs = myfs.open_fs(disk)
-    bad = [n for n, d in want.items() if fs.read("/" + n) != d]
+    bad = [n for n, d in want.items() if fs.read(where + n) != d]
     for p, d in extra.items():
         if fs.read(p) != d:
             bad.append(p)
@@ -382,7 +392,8 @@ def part_b(tmp):
         expect(P, pi, "fsck (v1)", "fsck", ["old MyFS v1"])
         expect(P, pi, "v1 still writable", "write v1new.txt still v1", ["Wrote 9 bytes"])
         expect(P, pi, "cat /path on v1", "cat /readme.txt", ["Welcome to MyOS!"])
-        expect(P, pi, "fsupgrade", "fsupgrade", [f"Done: {n + 1} file(s) kept"], 30)
+        expect(P, pi, "fsupgrade", "fsupgrade", [f"Done: {n + 1} file(s) kept", "Your files are in /home now",
+                                                "myos> "], 30)
         expect(P, pi, "already v2", "fsupgrade", ["Already MyFS v2."])
         expect(P, pi, "files kept", "ls", [f"{n + 1} file(s)", "data01.bin", "v1new.txt"])
         expect(P, pi, "cat after upgrade", "cat readme.txt", ["Welcome to MyOS!"])
@@ -394,12 +405,13 @@ def part_b(tmp):
     pi = Pi(card)
     try:
         out = pi.read_prompt(15)
-        check(P, "after reboot: v2", f"MyFS mounted from myfs.img, {n + 2} file(s), 1 folder(s)" in out, out)
+        check(P, "after reboot: v2", f"MyFS mounted from myfs.img, {n + 3} file(s), {1 + LAYOUT_DIRS} folder(s)"
+              in out, out)
         expect(P, pi, "still there", "cat x/y.txt", ["in a folder"])
     finally:
         pi.close()
     check_files(P, card_image(card, layout, "b-after.img"), want,
-                {"/v1new.txt": b"still v1\n", "/x/y.txt": b"in a folder\n"})
+                {"/home/v1new.txt": b"still v1\n", "/home/x/y.txt": b"in a folder\n"}, "/home/")
 
 
 # ------------------------------------------------------------------ C
@@ -416,14 +428,14 @@ def part_c(tmp):
     pi = Pi(card)
     try:
         out = pi.read_prompt(15)
-        check(P, "boot: PC-upgraded v2", f"MyFS mounted from myfs.img, {len(want)} file(s)" in out
+        check(P, "boot: PC-upgraded v2", f"MyFS mounted from myfs.img, {len(want) + 1} file(s)" in out
               and "old MyFS" not in out, out)
         expect(P, pi, "cat", "cat readme.txt", ["Welcome to MyOS!"])
         expect(P, pi, "fsck", "fsck", ["No problems found."], 30)
         expect(P, pi, "mkdir", "mkdir new", [], absent=["need"])
     finally:
         pi.close()
-    check_files(P, card_image(card, layout, "c-after.img"), want, {})
+    check_files(P, card_image(card, layout, "c-after.img"), want, {}, "/home/")      # (tidied up at boot)
 
 
 # ------------------------------------------------------------------ D
@@ -464,7 +476,7 @@ def part_d(tmp):
     pi = Pi(card)
     try:
         out = pi.read_prompt(20)
-        check(P, f"boot with a {pieces[0]}-piece file", "MyFS mounted from myfs.img, 3 file(s)" in out, out)
+        check(P, f"boot with a {pieces[0]}-piece file", "MyFS mounted from myfs.img, 4 file(s)" in out, out)
         expect(P, pi, "install python into holes", "pkg install python", ["Done."], 30)
         expect(P, pi, "fragmented program runs", "python frag.py", ["frag True 102400"], 60)
         expect(P, pi, "fsck", "fsck", ["No problems found."], 30)
@@ -477,8 +489,8 @@ def part_d(tmp):
     img = card_image(card, layout, "d-after.img")
     disk = myfs.Disk(img)
     fs = myfs.open_fs(disk)
-    data = fs.read("/frag.bin")
-    xs, chains = fs.extents(fs.lookup("/frag.bin")[2])
+    data = fs.read("/home/frag.bin")
+    xs, chains = fs.extents(fs.lookup("/home/frag.bin")[2])
     rep = fs.check(fix=False)
     check(P, "myfs.py reads the pieces", data == b"0123456789abcdef" * 6400 and len(xs) > 69
           and len(chains) >= 1 and not rep["damaged"] and not rep["leaked_kb"], (len(xs), len(chains), rep))

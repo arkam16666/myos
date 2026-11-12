@@ -63,7 +63,10 @@ static int tls_var_check(void) {           // the thread pointer belongs to this
 static char bss_buf[100000];                // zeroed by the loader
 static char data_str[] = "data segment";
 
+static char *self;                  // argv[0]: where this program is (execve runs it again)
+
 static void run(int argc, char **argv, char **envp, u64 *auxv) {
+    self = argv[0];
     if (argc >= 3 && seq(argv[1], "exit")) {
         int n = 0;
         for (char *c = argv[2]; *c; c++) n = n * 10 + (*c - '0');
@@ -133,7 +136,7 @@ static void run(int argc, char **argv, char **envp, u64 *auxv) {
     check("open for writing", fd >= 3);
     check("write", S3(64, fd, "line one\nline two\n", 18) == 18);
     check("close", S1(57, fd) == 0);
-    fd = (int)S4(56, -100, "/lxtest.txt", 0, 0);
+    fd = (int)S4(56, -100, "./lxtest.txt", 0, 0);
     char buf[64];
     i64 n = S3(63, fd, buf, sizeof buf);
     check("read back", n == 18 && buf[5] == 'o' && buf[17] == '\n');
@@ -142,8 +145,8 @@ static void run(int argc, char **argv, char **envp, u64 *auxv) {
     check("fstat size", S2(80, fd, st) == 0 && st[6] == 18);
     S1(57, fd);
     check("open missing file", S4(56, -100, "no-such-file", 0, 0) == -2);
-    // getdents64 on "/"
-    fd = (int)S4(56, -100, "/", 040000, 0);
+    // getdents64 on the current folder
+    fd = (int)S4(56, -100, ".", 040000, 0);
     int found = 0;
     for (;;) {
         char d[512];
@@ -206,7 +209,7 @@ static void run(int argc, char **argv, char **envp, u64 *auxv) {
     if (pid == 0) {
         char *av[] = { "lxtest", "echo", "exec", "works", 0 };
         char *ev[] = { "A=1", 0 };
-        S3(221, "/bin/lxtest", av, ev);
+        S3(221, self, av, ev);
         exit_(99);
     }
     S4(260, pid, &status, 0, 0);

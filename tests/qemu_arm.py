@@ -92,7 +92,7 @@ PROGRAMS += [
     ("python repl",       "python",               [">>> "], 4),
     ("python float",      "7 / 2",                ["3.5"]),
     ("python bigint",     "2 ** 100",             ["1267650600228229401496703205376"]),
-    ("python files",      "import os; sorted(os.listdir())[:2]", ["calc.pkg"]),
+    ("python files",      "import os; sorted(os.listdir())[:2]", ["pi.txt", "readme.txt"]),
     ("python big memory", "b = bytes(8 * 1024 * 1024); l = [bytearray(1 << 20) for i in range(12)]; len(b) + len(l)",
                           ["8388620"], 6),
     ("python memory back", "del b, l; import gc; gc.collect(); len(bytes(16 * 1024 * 1024))", ["16777216"], 6),
@@ -108,7 +108,7 @@ SD_AFTER_REBOOT = [
 PANIC = [
     ("boot",            None,                     ["myos> "]),
     ("kernel panic",    "crash",                  ["KERNEL PANIC", "Undefined Instruction", "x30", "press R"]),
-    ("R restarts",      "R",                      ["for Raspberry Pi (ARM64)", "myos> "], 6),
+    ("R restarts",      "R",                      ["for Raspberry Pi (ARM64)", "myos> "], 20),
 ]
 
 
@@ -142,8 +142,11 @@ def run(label, machine, image, tests, sd=None):
         for test in tests:
             name, command, expect = test[:3]
             wait = test[3] if len(test) > 3 else 1
-            if command is None:
-                out = read_for(5)               # boot: about 3 s in QEMU with an SD card
+            if command is None:                 # boot: 3-10 s in QEMU with an SD card
+                out = read_for(1)
+                end = time.time() + 20
+                while not all(e in out for e in expect) and time.time() < end:
+                    out += read_for(0.5)
             else:
                 for ch in command:
                     s.sendall(ch.encode())
@@ -169,8 +172,8 @@ def check_with_myfs_py(card, lba, sectors):
     mksdimg.read_myfs(card, lba, sectors, out)
     disk = myfs.Disk(out)
     fs = myfs.open_fs(disk)
-    names = {n for n, _, _ in fs.listdir("/")}
-    data = fs.read("/pi.txt") if "pi.txt" in names else b""
+    names = {n for n, _, _ in fs.listdir("/home")}       # (people's files: layout.c)
+    data = fs.read("/home/pi.txt") if "pi.txt" in names else b""
     disk.close()
     ok = data == b"made on a pi\n" and "hello.py" not in names and "readme.txt" in names
     print(f"{'PASS' if ok else 'FAIL'}  raspi3b  myfs.py reads what MyOS wrote"
@@ -251,16 +254,21 @@ def main():
     tmp = tempfile.mkdtemp(prefix="myos-armtest-")
     card = os.path.join(tmp, "sd.img")
     image = "arm/build/kernel8-qemu.img"
+    # (not the file-tree packages, python3 and musl: too big for this card; tests/qemu_python3.py)
     pkgs = sorted(os.path.join(ROOT, "arm", "build", "packages", f)
-                  for f in os.listdir(os.path.join(ROOT, "arm", "build", "packages")) if f.endswith(".pkg"))
+                  for f in os.listdir(os.path.join(ROOT, "arm", "build", "packages"))
+                  if f.endswith(".pkg") and f not in ("python3.pkg", "musl.pkg"))
     layout = mksdimg.build(card, [os.path.join(ROOT, "files", "readme.txt"),
                                   os.path.join(ROOT, "files", "hello.py")] + pkgs,
                            kernel=os.path.join(ROOT, image))
     lba, sectors = layout["myfs"]
-    files = 2 + len(pkgs)
+    files = 2 + len(pkgs) + 1             # + /var/lib/myos/layout (layout.c)
+    # first boot: MyOS moves the files from "/" into /home (readme, hello) and
+    # /var/cache/pkg (the packages); the shell starts in /home
     boot_with_sd = [("boot banner + disk", None, ["for Raspberry Pi (ARM64)",
-                                                 f"MyFS mounted from myfs.img, {files} file(s)"])]
-    sd = [(n, c, [f"{files} file(s)" if e == "2 file(s)" else e for e in x]) for n, c, x in SD]
+                                                 f"MyFS mounted from myfs.img, {files} file(s)",
+                                                 f"Tidied up: {files - 1} file(s) moved"])]
+    sd = SD
     failed = run("raspi3b", "raspi3b", image, boot_with_sd + BASIC[1:] + sd + PROGRAMS, sd=card)
     # after: pi.txt + t.py added, hello.py removed, cdemo + crashme + python installed, pkg.db
     after = [(n, c, [e.replace("10 file(s)", f"{files + 5} file(s)") for e in x])

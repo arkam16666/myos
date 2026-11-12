@@ -76,7 +76,7 @@ def main():
             fs.write("/" + os.path.basename(p), open(p, "rb").read())
         fs.write("/t1.py", T1)
 
-    mksdimg.build(card, [], kernel=os.path.join(ROOT, IMAGE), card_mb=256, boot_mb=64, second_setup=setup)
+    mksdimg.build(card, [], kernel=os.path.join(ROOT, IMAGE), card_mb=512, boot_mb=64, second_setup=setup)   # (room for two venvs)
     port = int(os.environ.get("MYOS_TEST_PORT", 0)) or _free_port()
     qemu = subprocess.Popen([QEMU, "-M", "raspi3b", "-kernel", IMAGE, "-display", "none", "-monitor", "none",
                              "-drive", f"file={card},if=sd,format=raw",
@@ -119,13 +119,20 @@ def main():
         check("musl's loader in /lib", "ld-musl-aarch64.so.1" in out, out)
         out = run('python3 -c "print(6*7)"', 180)
         check("python3 -c", "42" in out.split("\n"), out)
-        out = run("python3 /t1.py one two", 240)
+        out = run("python3 t1.py one two", 240)          # (moved to /home at first boot)
         for want in ("version 3.12.16 linux", "where /usr/bin/python3 /usr", 'json {"a": [1, 2, 3]}',
                      "sqlite 45", "sha256 ba7816bf8f01cfea", "dataclass P(x=1, y=2)", "re ['1', '22', '333']",
                      "decimal 0.125", "zlib 33", "readback written by CPython", "args ['one', 'two']"):
             check("t1.py: " + want, want in out, out)
         out = run('python3 -c "import nosuchmodule"', 180)
         check("tracebacks", "ModuleNotFoundError: No module named 'nosuchmodule'" in out, out)
+        out = run("python3 -m venv /env", 600)
+        check("python3 -m venv (no symlinks, no ensurepip)", "no ensurepip here" in out and "rror" not in out, out)
+        out = run("/env/bin/python3 -c \"import sys; print('in venv', sys.prefix, sys.prefix != sys.base_prefix)\"", 300)
+        check("the venv's python", "in venv /env True" in out, out)
+        out = run("python3 -m venv --system-site-packages /env2", 600)
+        out = run("/env2/bin/python3 -m pip --version", 600)
+        check("pip through --system-site-packages", "pip 2" in out and "/usr/lib/python3.12" in out, out)
         out = run("pkg list")
         check("pkg list", "python3" in out and "musl" in out, out)
         out = run("pkg remove python3", 120)

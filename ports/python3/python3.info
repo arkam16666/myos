@@ -3,5 +3,5 @@
 // fetched by tools/get-deps.ps1 into third_party/python3 and laid out by
 // ports/python3/stage.py. MyOS runs it with its Linux layer and the dynamic
 // loader from the 'musl' package - read by tools/mkpkg.py
-// @version 3.12.16
+// @version 3.12.16-1
 // @description Python 3.12 (CPython): python3 command

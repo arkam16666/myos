@@ -1,11 +1,14 @@
 # mip - MicroPython's name for pip: runs pip with the same arguments
 #   mip install NAME   ->   pip install NAME
-# @version 1.0
+# @version 1.1
 # @description Same as pip (MicroPython's name for it)
 import sys
 
 try:
-    source = open("/pip.py").read()
+    try:
+        source = open("/bin/pip.py").read()     # where pkg installs apps (MyOS with folders)
+    except OSError:
+        source = open("/pip.py").read()
 except OSError:
     source = None
 if source is None:

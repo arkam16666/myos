@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "console.h"
+#include "layout.h"
 #include "myfs.h"
 #include "print.h"
 #include "proc.h"
@@ -305,13 +306,15 @@ static int core_is_up(uint32_t core) {
 }
 
 // ---------------------------------------------------------------- firmware files
-static const char *first_file(const char *const *names) {
+// the first of these firmware files that is there (in /lib/firmware, or "/")
+static const char *first_file(const char *const *names, char *path) {
     for (int i = 0; names[i]; i++)
-        if (myfs_size(names[i]) > 0) return names[i];
+        if (find_firmware(names[i], path) && myfs_size(path) > 0) return path;
     return 0;
 }
 
 static const char *fw_name, *nvram_name, *clm_name;
+static char fw_path[MYFS_PATH_MAX], nvram_path[MYFS_PATH_MAX], clm_path[MYFS_PATH_MAX];
 
 static void pick_files(void) {
     static const char *const bin1[] = { "brcmfmac43436s-sdio.bin", "brcmfmac43430-sdio.bin", 0 };
@@ -321,9 +324,9 @@ static void pick_files(void) {
     static const char *const txt2[] = { "brcmfmac43436-sdio.txt", "brcmfmac43430b0-sdio.txt", 0 };
     static const char *const clm2[] = { "brcmfmac43436-sdio.clm_blob", "brcmfmac43430b0-sdio.clm_blob", 0 };
     int b0 = chip_rev >= 2;
-    fw_name = first_file(b0 ? bin2 : bin1);
-    nvram_name = first_file(b0 ? txt2 : txt1);
-    clm_name = first_file(b0 ? clm2 : clm1);
+    fw_name = first_file(b0 ? bin2 : bin1, fw_path);
+    nvram_name = first_file(b0 ? txt2 : txt1, nvram_path);
+    clm_name = first_file(b0 ? clm2 : clm1, clm_path);
 }
 
 static uint8_t chunk[4096] __attribute__((aligned(8)));
@@ -878,7 +881,7 @@ static int scan_start(void) {
 }
 
 // ---------------------------------------------------------------- saved networks (wifi.cfg)
-#define CFG_FILE "wifi.cfg"
+#define CFG_FILE sys_file(F_WIFI_CFG)      // /etc/wifi.cfg (layout.h)
 #define MAX_SAVED 8
 typedef struct { char ssid[33]; char pass[64]; } saved_t;
 static saved_t saved[MAX_SAVED];

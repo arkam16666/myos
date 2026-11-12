@@ -25,6 +25,7 @@
 #include "broadcom/caches.h"
 #include "console.h"
 #include "linux.h"
+#include "layout.h"
 #include "myfs.h"
 #include "print.h"
 #include "proc.h"
@@ -689,7 +690,7 @@ static int resolve(const char *path, char *name, int *fdno) {
         top[0] = '/';
         strcpy(top + 1, abs + k);
         if (myfs_stat(top, 0) == MYFS_FILE) strcpy(name, top);
-        else if (applet_lookup(abs + k)) strcpy(name, "/busybox");
+        else if (applet_lookup(abs + k)) strcpy(name, busybox_path());
         return R_FILE;
     }
     if (!strcmp(abs, "/tmp") || !strncmp(abs, "/tmp/", 5)) {    // no /tmp yet: make it (or use "/" on v1)
@@ -2344,7 +2345,8 @@ static char applet_names[4096];     // the applet table from the busybox file ("
 static int32_t applets_len = -1, applets_of_size = -1;
 
 static void load_applets(void) {
-    int32_t size = myfs_size("/busybox");
+    const char *bb = busybox_path();
+    int32_t size = myfs_size(bb);
     if (size == applets_of_size) return;
     applets_of_size = size;
     applets_len = 0;
@@ -2352,11 +2354,11 @@ static void load_applets(void) {
     static uint8_t chunk[4096 + 16];
     static const char marker[] = "\0[\0[[\0";
     for (int32_t off = 0; off < size; off += 4096) {
-        int n = myfs_read("/busybox", (uint32_t)off, chunk, sizeof chunk);
+        int n = myfs_read(bb, (uint32_t)off, chunk, sizeof chunk);
         if (n <= 6) break;
         for (int i = 0; i + 6 <= n && i < 4096; i++) {
             if (memcmp(chunk + i, marker, 6) != 0) continue;
-            int got = myfs_read("/busybox", (uint32_t)(off + i + 1), applet_names, sizeof applet_names - 2);
+            int got = myfs_read(bb, (uint32_t)(off + i + 1), applet_names, sizeof applet_names - 2);
             if (got <= 0) return;
             int k = 0;
             while (k + 1 < got && !(applet_names[k] == 0 && applet_names[k + 1] == 0)) k++;
@@ -2389,9 +2391,22 @@ int linux_command(const char *line, int background) {
     while (*c && *c != ' ' && n < MYFS_PATH_MAX - 1) name[n++] = *c++;
     name[n] = 0;
     while (*c == ' ') c++;
+    // the program, found like the shell does: /bin, /usr/bin, "/", the current folder
+    char path[MYFS_PATH_MAX];
+    int found = 0;
+    if (!strchr_(name, '/')) {
+        static const char *const dirs[] = { "/bin/", "/usr/bin/", "/" };
+        for (unsigned i = 0; !found && i < sizeof dirs / sizeof dirs[0]; i++) {
+            if (strlen(dirs[i]) + strlen(name) >= MYFS_PATH_MAX) break;
+            strcpy(path, dirs[i]);
+            strcat(path, name);
+            found = myfs_stat(path, 0) == MYFS_FILE;
+        }
+    }
+    if (!found && myfs_normalize(proc_cwd(), name, path)) path[0] = 0;
     trace_next = 1;
-    if (linux_is_elf(name)) linux_run(name, name, c, background);
-    else if (linux_applet(name)) linux_run("/busybox", name, c, background);
+    if (path[0] && linux_is_elf(path)) linux_run(path, path, c, background);
+    else if (linux_applet(name)) linux_run(busybox_path(), name, c, background);
     else console_puts("strace: only Linux programs can be traced.\n");
     trace_next = 0;
     return 1;

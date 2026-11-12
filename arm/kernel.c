@@ -10,6 +10,7 @@
 #include "broadcom/mmu.h"
 #include "console.h"
 #include "fat.h"
+#include "layout.h"
 #include "led.h"
 #include "linux.h"
 #include "myfs.h"
@@ -131,10 +132,17 @@ static const char banner[] =
     "Type 'help' to see commands.\n\n";
 
 // "myos> " in the top folder, "myos:/apps> " anywhere else
+// "myos> " at home (/home, where shells start; "/" on a v1 disk without folders),
+// "myos:~/games> " below it, "myos:/etc> " anywhere else
 static void print_prompt(void) {
     const char *cwd = proc_cwd();
+    size_t h = strlen(HOME_DIR);
+    int v2 = myfs_mounted() && layout_v2();
     console_puts("myos");
-    if (strcmp(cwd, "/") != 0) {
+    if (v2 && !strncmp(cwd, HOME_DIR, h) && cwd[h] == '/') {
+        console_puts(":~");
+        console_puts(cwd + h);
+    } else if (v2 ? strcmp(cwd, HOME_DIR) != 0 : strcmp(cwd, "/") != 0) {
         console_putc(':');
         console_puts(cwd);
     }
@@ -334,6 +342,7 @@ static myfs_dev_t myfs_dev;
 static int mount_status = MYFS_ERR_NOFS;
 
 static int myfs_part = -1;          // the MBR entry MyFS lives in ('fsexpand'), -1 = myfs.img
+static int layout_moved;            // files layout_setup moved out of "/" at boot
 
 static const char *storage_name(void) {
     static char name[] = "partition 0";
@@ -371,6 +380,7 @@ static void storage_init(void) {
             myfs_dev.write = sd_write;
             bitmap_for(myfs_dev.sectors);
             mount_status = myfs_mount(&myfs_dev);
+            if (mount_status == 0) layout_moved = layout_setup();
             return;
         }
     }
@@ -382,6 +392,7 @@ static void storage_init(void) {
     myfs_dev.read = sd_read;
     myfs_dev.write = sd_write;
     mount_status = myfs_mount(&myfs_dev);
+    if (mount_status == 0) layout_moved = layout_setup();
 }
 
 static void print_check_report(const myfs_check_t *r, int full) {
@@ -463,6 +474,12 @@ static void print_storage_status(void) {
             }
             console_puts(". Type 'ls' to list them.\n");
             print_check_report(myfs_mount_check(), 0);
+            if (layout_moved) {
+                console_puts("Tidied up: ");
+                print_dec((uint64_t)layout_moved);
+                console_puts(" file(s) moved from / into /home, /bin, /etc, /lib/firmware and /var\n"
+                             "(your own files are in /home, where the shell starts).\n");
+            }
             console_putc('\n');
         }
     }
@@ -685,7 +702,10 @@ static void cmd_ls(const char *arg) {
 static void cmd_cd(const char *arg) {
     if (!need_fs()) return;
     char path[MYFS_PATH_MAX], word[MYFS_PATH_MAX];
-    if (!abs_path(first_word(arg, word) ? word : "/", path)) return;
+    // 'cd' alone (or 'cd ~') goes home, like Linux: /home (v1 disk: "/")
+    const char *home = layout_v2() && myfs_stat(HOME_DIR, 0) == MYFS_DIR ? HOME_DIR : "/";
+    if (!first_word(arg, word) || !strcmp(word, "~")) strcpy(word, home);
+    if (!abs_path(word, path)) return;
     int t = myfs_stat(path, 0);
     if (t < 0) fs_error(t, word);
     else if (t != MYFS_DIR) fs_error(MYFS_ERR_NOTDIR, word);
@@ -1024,6 +1044,13 @@ static void cmd_fsck(const char *arg) {
     }
 }
 
+// after format / fsupgrade / fsexpand: every shell and program to /home (their
+// files were just moved there, or their folder is gone); "/" on a v1 disk
+static void everyone_home(void) {
+    const char *home = layout_v2() && myfs_stat(HOME_DIR, 0) == MYFS_DIR ? HOME_DIR : "/";
+    for (int i = 0; i < NPROC; i++) strcpy(proc_slot(i)->cwd, home);
+}
+
 static void cmd_fsupgrade(void) {
     if (!need_fs()) return;
     if (myfs_version() == 2) {
@@ -1033,6 +1060,10 @@ static void cmd_fsupgrade(void) {
     console_puts("Upgrading MyFS v1 -> v2. File data stays where it is; a new folder table\n"
                  "and free-space bitmap are written into free space, then the first sector.\n");
     int n = myfs_upgrade();
+    if (n >= 0) {
+        layout_moved = layout_setup();
+        everyone_home();
+    }
     if (n < 0) {
         console_puts("Upgrade failed: ");
         console_puts(myfs_error(n));
@@ -1045,6 +1076,8 @@ static void cmd_fsupgrade(void) {
     console_puts(" file(s) kept, ");
     print_dec(myfs_free_kb());
     console_puts(" KB free. Folders work now: try 'mkdir'.\n");
+    if (layout_moved)
+        console_puts("Your files are in /home now (programs in /bin, settings in /etc).\n");
 }
 
 // ---------------------------------------------------------------
@@ -1250,6 +1283,8 @@ static void cmd_fsexpand(const char *arg) {
     myfs_dev = nd;
     myfs_part = 1;
     mount_status = 0;
+    layout_moved = layout_setup();
+    everyone_home();
     console_puts("Done: MyFS now uses partition 2, ");
     print_dec(myfs_free_kb() / 1024);
     console_puts(" MB free. (myfs.img is still on the boot partition as an old\n"
@@ -1267,11 +1302,11 @@ static void cmd_format(const char *arg) {
         console_puts(". Type 'format yes' to continue.\n");
         return;
     }
-    if (myfs_format(&myfs_dev)) {
+    if (myfs_format(&myfs_dev) || (layout_setup(), 0)) {
         console_puts("Disk error!\n");
         return;
     }
-    for (int i = 0; i < NPROC; i++) strcpy(proc_slot(i)->cwd, "/");     // old folders are gone
+    everyone_home();                                // old folders are gone
     console_puts(storage_name());
     console_puts(" formatted with MyFS v2. ");
     print_dec(myfs_free_kb());
@@ -1590,8 +1625,11 @@ static void cmd_update(void) {
 
 static void cmd_recv(const char *arg) {
     char word[MYFS_PATH_MAX], name[MYFS_PATH_MAX];
+    int is_pkg = myfs_mounted() && first_word(arg, word) && layout_v2() && strlen(word) > 4 &&
+                 !strcmp(word + strlen(word) - 4, ".pkg");
+    for (const char *c = word; is_pkg && *c; c++) is_pkg = *c != '/';
     if (!myfs_mounted() || !first_word(arg, word) ||
-        myfs_normalize(proc_cwd(), word, name) || !myfs_valid_name(name)) {
+        myfs_normalize(is_pkg ? PKG_CACHE_DIR : proc_cwd(), word, name) || !myfs_valid_name(name)) {
         receive_failed("RECV", !myfs_mounted() ? "no file system" : "usage: recv <file>");
         return;
     }
@@ -1610,22 +1648,25 @@ static void cmd_recv(const char *arg) {
     console_puts("\n");
 }
 
-// a command's program: "prog" is looked for in the top folder (where pkg
-// installs single programs), then /usr/bin and /bin (programs from multi-file
-// packages, like python3), then in the current folder; "dir/prog" is a path
+// a command's program: "prog" is looked for in /bin (where pkg installs),
+// /usr/bin (file-tree packages like python3), "/" (where older MyOS kept
+// programs), then in the current folder; "dir/prog" is a path
 static int find_program(const char *name, char *out) {
     if (myfs_normalize("/", name, out)) return 0;
     for (const char *s = name; *s; s++) {
         if (*s == '/') return myfs_normalize(proc_cwd(), name, out) == 0 && myfs_stat(out, 0) == MYFS_FILE;
     }
-    if (myfs_stat(out, 0) == MYFS_FILE) return 1;
-    static const char *const dirs[] = { "/usr/bin/", "/bin/" };
+    static const char *const dirs[] = { "/bin/", "/usr/bin/" };
+    char top[MYFS_PATH_MAX];
+    strcpy(top, out);
     for (unsigned i = 0; i < sizeof dirs / sizeof dirs[0]; i++) {
         if (strlen(dirs[i]) + strlen(name) >= MYFS_PATH_MAX) break;
         strcpy(out, dirs[i]);
         strcat(out, name);
         if (myfs_version() == 2 && myfs_stat(out, 0) == MYFS_FILE) return 1;
     }
+    strcpy(out, top);
+    if (myfs_stat(out, 0) == MYFS_FILE) return 1;
     return myfs_normalize(proc_cwd(), name, out) == 0 && myfs_stat(out, 0) == MYFS_FILE;
 }
 
@@ -1678,6 +1719,8 @@ int main(void) {
 
 static void shell_loop(void) {
     char line[250];                 // programs get at most 250 bytes of arguments
+    if (myfs_mounted() && layout_v2() && myfs_stat(HOME_DIR, 0) == MYFS_DIR)
+        strcpy(proc_current()->cwd, HOME_DIR);  // people's files (see layout.h)
     for (;;) {
         report_finished_jobs();
         print_prompt();
@@ -1779,20 +1822,25 @@ static void shell_loop(void) {
             if (!myfs_mounted() || !find_program(name, prog) ||
                 run_program(prog, args ? args : "", background) < 0) {
                 if (myfs_mounted() && pkg_python_app(name)) {   // a Python app from pkg
-                    char pyargs[128];
-                    // (in another folder, python needs the app's full path)
-                    strcpy(pyargs, strcmp(proc_cwd(), "/") == 0 ? "" : "/");
-                    strcat(pyargs, name);
-                    strcat(pyargs, ".py");
+                    char pyargs[128], app[64], python[64];
+                    strcpy(app, name);
+                    strcat(app, ".py");
+                    bin_file(app, pyargs);              // the app's full path ("/bin/snake.py")
+                    if (pyargs[0] != '/') {             // (v1 disk: "/" in another folder)
+                        strcpy(pyargs, strcmp(proc_cwd(), "/") == 0 ? "" : "/");
+                        strcat(pyargs, app);
+                    }
                     if (args && strlen(args) < sizeof pyargs - 24) {
                         strcat(pyargs, " ");
                         strcat(pyargs, args);
                     }
-                    if (run_program("/python", pyargs, background) < 0) {
+                    bin_file("python", python);
+                    if (python[0] != '/' || myfs_stat(python, 0) != MYFS_FILE) strcpy(python, "/python");
+                    if (run_program(python, pyargs, background) < 0) {
                         console_puts("This is a Python app: install python first (pkg install python).\n");
                     }
                 } else if (myfs_mounted() && linux_applet(name)) {    // "vi" = "busybox vi"
-                    linux_run("/busybox", name, args ? args : "", background);
+                    linux_run(busybox_path(), name, args ? args : "", background);
                 } else {
                     console_puts("Unknown command. Type 'help'.\n");
                 }

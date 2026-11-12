@@ -106,7 +106,7 @@ AFTER = {
                ("python t_pipweb.py install nosuch", ["not in micropython-lib", "pip search"]),
                ("python t_pipweb.py search demo", ["A demo", "versions: 1.2", "2 package(s)"]),
                ("pip uninstall demo demolib", ["Removed demo 1.2", "Removed demolib 0.3"]),
-               ("ls lib", ["pip.json"])],
+               ("ls /lib", ["pip.json"])],
     "mip":    ("pkg remove pip", []),
 }
 
@@ -152,11 +152,11 @@ FILES = {
                      b"try:\n    import demo\n    print('demo works:', demo.answer())\n"
                      b"except ImportError:\n    pass\n",
         "/t_pipweb.py": b"import json\n"
-                        b"WEB = json.loads(open('/pipweb.json').read())\n"
+                        b"WEB = json.loads(open('pipweb.json').read())\n"   # (moved to /home at first boot)
                         b"def fetch(url, max_size=65536):\n"
                         b"    return (200, WEB[url].encode()) if url in WEB else (404, b'')\n"
                         b"g = {'__name__': 'pip'}\n"
-                        b"exec(open('/pip.py').read(), g)\n"
+                        b"exec(open('/bin/pip.py').read(), g)\n"           # (pkg puts apps in /bin)
                         b"g['fetch'] = fetch\n"
                         b"g['run']()\n",
         "/pipweb.json": _pip_web(),

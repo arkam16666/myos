@@ -113,10 +113,12 @@ static void on_err(void *arg, err_t err) {  // lwIP already freed the connection
 static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
     (void)arg;
     if (err != ERR_OK || pcb == NULL) return ERR_VAL;
-    if (client) {                           // someone is already connected
-        tcp_abort(pcb);
-        return ERR_ABRT;
-    }
+    // someone is already connected: the new connection takes the terminal over.
+    // (A client that vanished while MyOS was busy - e.g. unpacking a big
+    // package - can leave a connection lwIP still thinks is open, and telnet
+    // would refuse everyone until a reboot. It's USB-only, one person's PC.)
+    int took_over = client != NULL;
+    if (took_over) drop_client();
     client = pcb;
     client_ip = pcb->remote_ip;
     tcp_nagle_disable(pcb);                 // send each keystroke echo at once
@@ -130,6 +132,11 @@ static err_t on_accept(void *arg, struct tcp_pcb *pcb, err_t err) {
                                   (char)IAC, (char)DO, OPT_SGA };
     memcpy(tx, hello, sizeof hello);
     tx_len = sizeof hello;
+    if (took_over) {                        // (the same shell goes on: no new banner)
+        static const char note[] = "\r\n(this telnet session took over the earlier one: press Enter)\r\n";
+        memcpy(tx + tx_len, note, sizeof note - 1);
+        tx_len += sizeof note - 1;
+    }
     connect_event = 1;
     return ERR_OK;
 }

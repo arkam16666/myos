@@ -222,6 +222,19 @@ fsck                   ตรวจระบบไฟล์ (fsck fix = ลบ e
 - หลังอัปเกรด MyOS PC (x86) และ kernel ของ Pi รุ่นก่อน v2 อ่าน `myfs.img` นี้ไม่ได้แล้ว ถ้าต้องย้อนกลับ ให้วาง `myfs.img` ที่สำรองไว้กลับลงการ์ด
 - ทำบนคอมแทนก็ได้: `python tools\myfs.py myfs.img upgrade`
 
+**ไฟล์อยู่ตรงไหน** (MyFS v2 จัดแบบ Linux; ดิสก์ v1 ที่ไม่มีโฟลเดอร์ยังเก็บทุกอย่างไว้ที่ `/` เหมือนเดิม):
+```
+/home/            ไฟล์ของคุณ shell เริ่มที่นี่ (prompt "myos>"; ในโฟลเดอร์ย่อยเป็น "myos:~/games>")
+/bin/             โปรแกรมที่ pkg ติดตั้ง (python, node, java, busybox ...) และแอป Python (snake.py ...)
+/usr/bin/, /usr/lib/   แพ็กเกจหลายไฟล์ (python3)
+/lib/             ไลบรารี: ของ pip (MicroPython), ld-musl ของ Linux; /lib/firmware/ ไฟล์ firmware Wi-Fi
+/etc/             ตั้งค่า: wifi.cfg, ssh/ (คีย์และรหัสผ่าน SSH)
+/var/lib/pkg/     ข้อมูลของ pkg (pkg.db, pkg.idx ...)   /var/cache/pkg/  ไฟล์ .pkg ที่ส่งมาจากคอม
+```
+- พิมพ์ชื่อโปรแกรมได้จากทุกโฟลเดอร์: MyOS หาใน `/bin`, `/usr/bin`, `/` แล้วโฟลเดอร์ปัจจุบัน
+- ไฟล์ที่ส่งด้วย `arm\push-pi.ps1` ไปอยู่ในโฟลเดอร์ปัจจุบันของ terminal serial (ปกติ `/home`) ส่วนไฟล์ `.pkg` ไปที่ `/var/cache/pkg` ให้ `pkg install` หาเจอ
+- ดิสก์ที่สร้างก่อนมีผังนี้: บูตครั้งแรกด้วย MyOS รุ่นใหม่ MyOS ย้ายไฟล์จาก `/` ให้เองครั้งเดียว (ไฟล์ระบบไป `/etc` `/var` `/lib/firmware`, โปรแกรมจาก pkg ไป `/bin`, ไฟล์อื่นไป `/home`) แล้วบอกว่าย้ายกี่ไฟล์ตอนบูต
+
 **ใช้ SD card ทั้งใบ (`fsexpand`)**: ปกติ MyFS อยู่ในไฟล์ `myfs.img` (16 MB) บน partition boot ส่วนที่เหลือของการ์ดเป็น partition ของ Linux เดิม `fsexpand` ให้ MyFS ใช้ที่เหลือทั้งหมดแทน (การ์ด 64 GB ได้ราว 59 GB, สูงสุด 128 GB)
 1. พิมพ์ `fsexpand` ก่อน: บอกว่าจะได้กี่ MB และจะลบ partition ไหน (ยังไม่แตะอะไร)
 2. พิมพ์ `fsexpand yes`: อ่านทุกไฟล์เข้า RAM, สร้าง MyFS v2 ใน partition 2, เขียนไฟล์กลับ, อ่านเทียบทุกไฟล์ แล้วเปลี่ยนตาราง partition เป็นขั้นสุดท้าย (partition 2 เป็น type `0xDA`)
