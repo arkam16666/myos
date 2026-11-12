@@ -1,0 +1,7 @@
+// CPython 3.12 for 64-bit ARM Linux, prebuilt by python-build-standalone
+// (https://github.com/astral-sh/python-build-standalone, linked against musl),
+// fetched by tools/get-deps.ps1 into third_party/python3 and laid out by
+// ports/python3/stage.py. MyOS runs it with its Linux layer and the dynamic
+// loader from the 'musl' package - read by tools/mkpkg.py
+// @version 3.12.16
+// @description Python 3.12 (CPython): python3 command

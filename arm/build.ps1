@@ -35,7 +35,8 @@ if ($Pi4) { $flags += '-DPI4' }
 $common = @("$bcm/broadcom/boot8.s", "$bcm/broadcom/interrupts.c", "$bcm/broadcom/gen/interrupt_handlers.c",
             "$bcm/broadcom/mmu.c", "$bcm/broadcom/caches.c", "$bcm/broadcom/vcmailbox.c",
             'vectors.S', 'uart.c', 'led.c', 'console.c', 'print.c', 'sd.c', 'sdhost.c', 'sdio.c', 'wifi.c', 'fat.c', 'myfs.c',
-            'user.c', 'proc.c', 'linux.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c')
+            'user.c', 'proc.c', 'linux.c', 'pkg.c', 'http.c', 'sha256.c', 'kernel.c', '../csdk/libc.c',
+            '../ports/node/npmlib.c')   # (gunzip for tree packages, shared with npm)
 $usb    = @('usb.c', 'net.c', 'remote.c', 'ssh.c', 'rng.c', 'tls.c',
             "$tusb/src/tusb.c", "$tusb/src/common/tusb_fifo.c",
             "$tusb/src/device/usbd.c",
@@ -158,6 +159,20 @@ foreach ($name in @('busybox')) {
     if (-not (Test-Path $bin)) { Write-Host "  skipping $name (missing: run tools\get-deps.ps1)"; continue }
     python ../tools/mkpkg.py $bin "../ports/$name/$name.info" "build/packages/$name.pkg"
 }
+# File-tree packages (kind 4, unpacked from '/'): musl's dynamic loader, and
+# CPython that needs it (both prebuilt, from tools\get-deps.ps1)
+if (Test-Path ../third_party/musl/ld-musl-aarch64.so.1) {
+    $st = 'build/stage/musl'
+    if (Test-Path $st) { Remove-Item -Recurse -Force $st }
+    New-Item -ItemType Directory -Force "$st/lib", "$st/usr/share/doc/musl" | Out-Null
+    Copy-Item ../third_party/musl/ld-musl-aarch64.so.1 "$st/lib/"
+    if (Test-Path ../third_party/musl/COPYRIGHT) { Copy-Item ../third_party/musl/COPYRIGHT "$st/usr/share/doc/musl/" }
+    python ../tools/mkpkg.py $st ../ports/musl/musl.info build/packages/musl.pkg
+} else { Write-Host "  skipping musl (missing: run tools\get-deps.ps1)" }
+if (Test-Path ../third_party/python3/python/bin/python3.12) {
+    python ../ports/python3/stage.py ../third_party/python3/python build/stage/python3
+    python ../tools/mkpkg.py build/stage/python3 ../ports/python3/python3.info build/packages/python3.pkg
+} else { Write-Host "  skipping python3 (missing: run tools\get-deps.ps1)" }
 
 # MicroPython for the Pi (python\ built with ARCH=arm64) -> build\packages\python.pkg
 $make = Get-Command make -ErrorAction SilentlyContinue

@@ -50,7 +50,7 @@ Both are under this licence:
 
 `tools/get-deps.ps1` downloads these into `third_party/` at pinned versions.
 They keep their own licences; the MyOS builds and packages made from them
-(kernel, `python.pkg`, `lua.pkg`, `node.pkg`, `sqlite3.pkg`, `busybox.pkg`)
+(kernel, `python.pkg`, `lua.pkg`, `node.pkg`, `sqlite3.pkg`, `busybox.pkg`, `python3.pkg`, `musl.pkg`)
 fall under those licences too.
 
 | Project | Used for | Licence |
@@ -64,5 +64,7 @@ fall under those licences too.
 | [QuickJS](https://bellard.org/quickjs/) | `node` package | MIT |
 | [SQLite](https://www.sqlite.org) | `sqlite3` package | public domain |
 | [BusyBox](https://busybox.net) (static binary from Alpine Linux) | `busybox` package | GPL-2.0; source: busybox.net and Alpine's aports |
+| [CPython](https://www.python.org) 3.12, built by [python-build-standalone](https://github.com/astral-sh/python-build-standalone) (aarch64, musl) | `python3` package (program + standard library, unmodified) | PSF License; the build includes other libraries under their own licences (OpenSSL Apache-2.0, SQLite public domain, zlib, libffi MIT, bzip2, xz, ...): the full texts ship in the package as `/usr/lib/python3.12/LICENSE.txt` and are listed in the python-build-standalone release |
+| [musl](https://musl.libc.org) 1.2.5 (Alpine Linux's `musl` package) | `musl` package: `/lib/ld-musl-aarch64.so.1`, the dynamic loader + C library of musl programs | MIT; its `COPYRIGHT` file ships in the package as `/usr/share/doc/musl/COPYRIGHT` |
 | Raspberry Pi firmware (`bootcode.bin`, `start.elf`, ...) | USB boot only | Broadcom redistributable licence (`LICENCE.broadcom`) |
 | Wi-Fi chip firmware (RPi-Distro `firmware-nonfree`) | Wi-Fi on the Pi | Cypress/Broadcom redistributable licence |

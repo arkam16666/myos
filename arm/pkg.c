@@ -10,6 +10,10 @@
 //   kind 1 = a program ("MYEX" ...)      -> installed as file NAME
 //   kind 2 = a Python app (.py source)   -> installed as NAME.py, needs 'python'
 //   kind 3 = a Linux program (static AArch64 ELF, linux.c) -> installed as file NAME
+//   kind 4 = a file tree: a gzip'd tar (ustar) of paths like usr/bin/python3,
+//            unpacked from '/'; the files it put down are listed in
+//            /var/lib/pkg/NAME.list (for 'pkg remove'). Big ones are fine: the
+//            package and the unpacked tar get memory from the program pool.
 // Files the package manager keeps in MyFS:
 //   pkg.idx  the repository list from 'pkg update'
 //            one line per package: name version kind size sha256 description
@@ -21,6 +25,7 @@
 #include "myfs.h"
 #include "pkg.h"
 #include "print.h"
+#include "proc.h"
 #include "sha256.h"
 #include "user.h"
 #ifndef NO_USB
@@ -38,6 +43,8 @@
 #define KIND_PROGRAM 1
 #define KIND_PYTHON  2
 #define KIND_LINUX   3
+#define KIND_TREE    4
+#define LIST_DIR     "/var/lib/pkg"
 #define PKG_BUF   ((uint8_t *)0x01000000)   // free RAM while installing
 #define PKG_MAX   (0x00800000 - 0x1000)     // (up to IDX_BUF; Linux programs can be big)
 #define IDX_BUF   ((char *)0x01800000)      // the repository list while working on it
@@ -50,6 +57,52 @@ static const char usage[] =
     "       pkg remove NAME | upgrade\n";
 
 static uint8_t hdr[HDR_SIZE];
+
+// ports/node/npmlib.c (shared with npm): gzip
+long npm_gzip_size(const uint8_t *in, size_t n);
+long npm_gunzip(const uint8_t *in, size_t n, uint8_t *out, size_t outlen);
+
+// npmlib.c's JSON part wants strchr, which the kernel's tiny C library
+// (csdk/libc.c, also linked with csdk/libc/string.c in programs) doesn't have
+char *strchr(const char *s, int c) {
+    for (;; s++) {
+        if (*s == (char)c) return (char *)s;
+        if (!*s) return 0;
+    }
+}
+
+// the package being installed: in PKG_BUF, or (too big for it) in blocks of the program pool
+static uint8_t *pkg_buf = PKG_BUF;
+static uint32_t pkg_max = PKG_MAX;
+static uint64_t big_mem;
+static int big_blocks;
+
+static void buf_release(void) {
+    if (big_mem) proc_mem_free(big_mem, big_blocks);
+    big_mem = 0;
+    pkg_buf = PKG_BUF;
+    pkg_max = PKG_MAX;
+}
+
+static int buf_for(uint32_t size) {
+    buf_release();
+    if (size <= PKG_MAX) return 1;
+    big_blocks = (int)((size + PROC_BLOCK - 1) / PROC_BLOCK);
+    big_mem = proc_mem_alloc(big_blocks);
+    if (!big_mem) {
+        console_puts("Not enough free memory for this package (close some programs?).\n");
+        return 0;
+    }
+    pkg_buf = (uint8_t *)big_mem;
+    pkg_max = (uint32_t)big_blocks * PROC_BLOCK;
+    return 1;
+}
+
+static void list_path(const char *name, char *out) {       // "/var/lib/pkg/NAME.list"
+    strcpy(out, LIST_DIR "/");
+    strcat(out, name);
+    strcat(out, ".list");
+}
 
 static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 
@@ -144,9 +197,10 @@ static void db_unset(const char *name) {
 }
 
 static int installed(const char *name) {
-    char v[16], py[24];
+    char v[16], py[24], list[48];
     py_name(name, py);
-    return myfs_size(name) >= 0 || (db_version(name, v) && myfs_size(py) >= 0);
+    list_path(name, list);
+    return myfs_size(name) >= 0 || (db_version(name, v) && (myfs_size(py) >= 0 || myfs_size(list) >= 0));
 }
 
 // ------------------------------------------------ pkg.idx: the repository list
@@ -192,8 +246,9 @@ static int idx_entry(int i, entry_t *e) {
         const char *q = word(line, e->name, sizeof e->name);
         q = word(q, e->version, sizeof e->version);
         q = word(q, num, sizeof num);
-        e->kind = num[0] == 'p' ? KIND_PYTHON : num[0] == 'l' ? KIND_LINUX : KIND_PROGRAM;
-                                                                // "py", "linux" or "app"
+        e->kind = num[0] == 'p' ? KIND_PYTHON : num[0] == 'l' ? KIND_LINUX : num[0] == 't' ? KIND_TREE
+                                                                         : KIND_PROGRAM;
+                                                                // "py", "linux", "tree" or "app"
         q = word(q, num, sizeof num);
         e->size = 0;
         for (char *d = num; *d >= '0' && *d <= '9'; d++) e->size = e->size * 10 + (uint32_t)(*d - '0');
@@ -441,7 +496,8 @@ static void pkg_search(const char *w) {
         pad_to(14, (int)strlen(e.name));
         console_puts(e.version);
         pad_to(9, (int)strlen(e.version));
-        console_puts(e.kind == KIND_PYTHON ? "python  " : e.kind == KIND_LINUX ? "linux   " : "program ");
+        console_puts(e.kind == KIND_PYTHON ? "python  " : e.kind == KIND_LINUX ? "linux   "
+                     : e.kind == KIND_TREE ? "files   " : "program ");
         console_puts(e.desc);
         console_putc('\n');
     }
@@ -483,7 +539,8 @@ static void pkg_info(const char *name) {
     console_puts(version);
     console_puts("\nType:        ");
     console_puts(kind == KIND_PYTHON ? "Python app (needs python)"
-                 : kind == KIND_LINUX ? "Linux program (static ARM64 ELF)" : "program");
+                 : kind == KIND_LINUX ? "Linux program (static ARM64 ELF)"
+                 : kind == KIND_TREE ? "files (programs and their libraries)" : "program");
     console_puts("\nDescription: ");
     console_puts(desc);
     console_puts("\nSize:        ");
@@ -509,29 +566,162 @@ static int hex_matches(const uint8_t h[32], const char *hex) {
 
 static int install(const char *name, int from_repo, int depth);
 
-// put the package in PKG_BUF[0..total) on the disk
-static int install_buffer(uint32_t total, int depth) {
+// every folder on the way to path (path itself too if it's a folder)
+static int mkdirs(const char *path, int last_too) {
+    char part[MYFS_PATH_MAX];
+    size_t n = strlen(path);
+    for (size_t i = 1; i <= n; i++) {
+        if (path[i] != '/' && (path[i] != 0 || !last_too)) continue;
+        memcpy(part, path, i);
+        part[i] = 0;
+        int r = myfs_mkdir(part);
+        if (r && r != MYFS_ERR_EXISTS) return r;
+    }
+    return 0;
+}
+
+static uint32_t octal(const uint8_t *p, int n) {
+    uint32_t v = 0;
+    for (int i = 0; i < n && p[i] >= '0' && p[i] <= '7'; i++) v = v * 8 + (uint32_t)(p[i] - '0');
+    return v;
+}
+
+// a tree package: gunzip it, then write every file of the tar from '/'
+static int install_tree(const char *prog, const char *version, const uint8_t *gz, uint32_t n) {
     const char *bad = "That package file is damaged or not a package.\n";
-    if (total < HDR_SIZE + 1 || memcmp(PKG_BUF, "MYPK", 4) != 0) {
+    if (myfs_version() != 2) {
+        console_puts("This package needs folders: the disk is the old MyFS v1. Type 'fsupgrade' first.\n");
+        return 0;
+    }
+    long tar_len = npm_gzip_size(gz, n);
+    if (tar_len <= 0) {
         console_puts(bad);
         return 0;
     }
-    uint32_t kind = rd32(PKG_BUF + P_KIND), size = rd32(PKG_BUF + P_SIZE);
-    if (size + HDR_SIZE > total || (kind != KIND_PROGRAM && kind != KIND_PYTHON && kind != KIND_LINUX)) {
+    int blocks = (int)((tar_len + PROC_BLOCK - 1) / PROC_BLOCK);
+    uint64_t mem = proc_mem_alloc(blocks + 1);          // + 1 block for the list of files
+    if (!mem) {
+        console_puts("Not enough free memory to unpack this package (close some programs?).\n");
+        return 0;
+    }
+    uint8_t *tar = (uint8_t *)mem;
+    char *list = (char *)mem + (uint64_t)blocks * PROC_BLOCK;
+    uint32_t list_len = 0;
+    console_puts("Unpacking ");
+    console_puts(prog);
+    console_putc(' ');
+    console_puts(version);
+    console_puts(" (");
+    print_dec((uint64_t)tar_len / 1024);
+    console_puts(" KB) ...\n");
+    int ok = npm_gunzip(gz, n, tar, (size_t)blocks * PROC_BLOCK) == tar_len;
+    if (!ok) console_puts(bad);
+    uint32_t files = 0;
+    for (long off = 0; ok && off + 512 <= tar_len; ) {
+        const uint8_t *h = tar + off;
+        if (h[0] == 0) break;                           // the end
+        uint32_t size = octal(h + 124, 12);
+        long next = off + 512 + (long)((size + 511) & ~511u);
+        if (next > tar_len) { console_puts(bad); ok = 0; break; }
+        char path[MYFS_PATH_MAX];
+        uint32_t k = 0;
+        path[k++] = '/';
+        if (memcmp(h + 257, "ustar", 5) == 0 && h[345]) {   // ustar: prefix "/" name
+            for (int i = 0; i < 155 && h[345 + i] && k < MYFS_PATH_MAX - 2; i++) path[k++] = (char)h[345 + i];
+            path[k++] = '/';
+        }
+        for (int i = 0; i < 100 && h[i] && k < MYFS_PATH_MAX - 1; i++) path[k++] = (char)h[i];
+        path[k] = 0;
+        while (k > 1 && path[k - 1] == '/') path[--k] = 0;
+        const char *rel = path[1] == '.' && path[2] == '/' ? path + 2 : path;   // "./usr/..."
+        char clean[MYFS_PATH_MAX];
+        if (myfs_normalize("/", rel, clean) || strcmp(clean, rel) != 0) {    // no "..", no oddities
+            console_puts("Bad path in the package: ");
+            console_puts(path);
+            console_putc('\n');
+            ok = 0;
+            break;
+        }
+        uint8_t type = h[156];
+        int r = 0;
+        if (type == '5') {
+            r = mkdirs(clean, 1);
+        } else if (type == '0' || type == 0) {
+            r = mkdirs(clean, 0);
+            if (!r) r = myfs_write(clean, h + 512, size);
+            if (!r) {
+                uint32_t l = (uint32_t)strlen(clean);
+                if (list_len + l + 2 < PROC_BLOCK) {
+                    memcpy(list + list_len, clean, l);
+                    list_len += l;
+                    list[list_len++] = '\n';
+                }
+                if (++files % 200 == 0) console_putc('.');
+            }
+        }                                               // (links and others: skipped)
+        if (r) {
+            if (files >= 200) console_putc('\n');
+            console_puts(clean);
+            console_puts(": ");
+            console_puts(myfs_error(r));
+            console_putc('\n');
+            ok = 0;
+            break;
+        }
+        off = next;
+    }
+    if (files >= 200) console_putc('\n');
+    if (ok) {
+        char lp[48];
+        list_path(prog, lp);
+        if (mkdirs(LIST_DIR, 1) || myfs_write(lp, list, list_len)) ok = 0;
+    }
+    proc_mem_free(mem, blocks + 1);
+    if (!ok) {
+        console_puts("Not installed completely. Free some disk space or try again.\n");
+        return 0;
+    }
+    db_set(prog, version);
+    print_dec(files);
+    console_puts(" files installed.\n");
+    return 1;
+}
+
+// put the package in pkg_buf[0..total) on the disk
+static int install_buffer(uint32_t total, int depth) {
+    const char *bad = "That package file is damaged or not a package.\n";
+    if (total < HDR_SIZE + 1 || memcmp(pkg_buf, "MYPK", 4) != 0) {
+        console_puts(bad);
+        return 0;
+    }
+    uint32_t kind = rd32(pkg_buf + P_KIND), size = rd32(pkg_buf + P_SIZE);
+    if (size + HDR_SIZE > total ||
+        (kind != KIND_PROGRAM && kind != KIND_PYTHON && kind != KIND_LINUX && kind != KIND_TREE)) {
         console_puts(bad);
         return 0;
     }
     char prog[16], version[16], file[24];
-    memcpy(prog, PKG_BUF + P_NAME, 15);
+    memcpy(prog, pkg_buf + P_NAME, 15);
     prog[15] = 0;
-    memcpy(version, PKG_BUF + P_VERSION, 15);
+    memcpy(version, pkg_buf + P_VERSION, 15);
     version[15] = 0;
     if (!valid_prog_name(prog)) {                       // e.g. no "readme.txt" overwrites
         console_puts(bad);
         return 0;
     }
+    if (kind == KIND_TREE) {
+        if (!install_tree(prog, version, pkg_buf + HDR_SIZE, size)) return 0;
+        // the tree packages are musl programs (python3 ...): they need its loader
+        if (strcmp(prog, "musl") != 0 && myfs_stat("/lib/ld-musl-aarch64.so.1", 0) != MYFS_FILE) {
+            console_puts(prog);
+            console_puts(" needs the musl C library.\n");
+            if (!install("musl", 0, depth + 1)) return 0;
+        }
+        console_puts("Done.\n");
+        return 1;
+    }
     if (kind == KIND_PROGRAM) {
-        int arch = program_header_arch(PKG_BUF + HDR_SIZE, size);
+        int arch = program_header_arch(pkg_buf + HDR_SIZE, size);
         if (arch == MYEX_ARCH_X86) {
             console_puts("That package is for MyOS PC (x86), not for the Pi.\n");
             return 0;
@@ -542,7 +732,7 @@ static int install_buffer(uint32_t total, int depth) {
         }
         strcpy(file, prog);
     } else if (kind == KIND_LINUX) {
-        const uint8_t *elf = PKG_BUF + HDR_SIZE;        // ELF64, little endian, machine 183 = AArch64
+        const uint8_t *elf = pkg_buf + HDR_SIZE;        // ELF64, little endian, machine 183 = AArch64
         if (size < 64 || memcmp(elf, "\177ELF", 4) != 0 || elf[4] != 2 || elf[5] != 1 || elf[18] != 183) {
             console_puts("That package is not a 64-bit ARM Linux program.\n");
             return 0;
@@ -556,7 +746,7 @@ static int install_buffer(uint32_t total, int depth) {
     console_putc(' ');
     console_puts(version);
     console_puts(" ...\n");
-    if (myfs_write(file, PKG_BUF + HDR_SIZE, size)) {
+    if (myfs_write(file, pkg_buf + HDR_SIZE, size)) {
         console_puts("Disk is full or a disk error happened.\n");
         return 0;
     }
@@ -590,11 +780,15 @@ static int install(const char *name, int from_repo, int depth) {
     int local = total >= 0 && !from_repo &&
                 (!in_repo || (read_header(file) && strcmp((const char *)&hdr[P_VERSION], e.version) == 0));
     if (local) {
-        if (total > (int32_t)PKG_MAX || myfs_read(file, 0, PKG_BUF, (uint32_t)total) != total) {
+        if (!buf_for((uint32_t)total)) return 0;
+        if (myfs_read(file, 0, pkg_buf, (uint32_t)total) != total) {
             console_puts("That package file is damaged or not a package.\n");
+            buf_release();
             return 0;
         }
-        return install_buffer((uint32_t)total, depth);
+        int ok = install_buffer((uint32_t)total, depth);
+        buf_release();
+        return ok;
     }
     if (!in_repo) {
         if (myfs_size(IDX_FILE) < 0) console_puts("No package list yet. Type 'pkg update' first.\n");
@@ -614,19 +808,24 @@ static int install(const char *name, int from_repo, int depth) {
     console_puts(" bytes) ...\n");
     uint32_t len;
     read_line_file(FROM_FILE, repo_base, sizeof repo_base);   // where the list came from
-    int r = fetch_from(repo_base, file, PKG_BUF, PKG_MAX, &len);
+    if (!buf_for(e.size + 1)) return 0;
+    int r = fetch_from(repo_base, file, pkg_buf, pkg_max, &len);
     if (r < 0) {
         say_http_error(r);
+        buf_release();
         return 0;
     }
     uint8_t h[32];
-    sha256(PKG_BUF, len, h);
+    sha256(pkg_buf, len, h);
     if (r != 200 || len != e.size || !hex_matches(h, e.sha)) {
         console_puts(r != 200 ? "The server doesn't have that file. Try 'pkg update'.\n"
                               : "The download is damaged (checksum doesn't match). Try 'pkg update'.\n");
+        buf_release();
         return 0;
     }
-    return install_buffer(len, depth);
+    int ok = install_buffer(len, depth);
+    buf_release();
+    return ok;
 }
 
 // other names people type for a package: pkg install nodejs -> node
@@ -652,6 +851,63 @@ static void pkg_install(const char *args) {
     }
 }
 
+// a tree package: every file in its list, then the folders that became empty
+// CPython writes compiled modules into DIR/__pycache__ next to the package's
+// files; they aren't in the list, but they go with the package
+static void remove_pycache(const char *dir) {
+    char pc[MYFS_PATH_MAX], name[MYFS_NAME_MAX + 1], f[MYFS_PATH_MAX];
+    if (strlen(dir) + 13 >= sizeof pc) return;
+    strcpy(pc, dir);
+    strcat(pc, "/__pycache__");
+    if (myfs_stat(pc, 0) != MYFS_DIR) return;
+    while (myfs_readdir(pc, 0, name, 0) == MYFS_FILE && strlen(pc) + strlen(name) + 2 < sizeof f) {
+        strcpy(f, pc);
+        strcat(f, "/");
+        strcat(f, name);
+        if (myfs_remove(f)) break;
+    }
+    myfs_rmdir(pc);
+}
+
+static int remove_tree(const char *name) {
+    char lp[48];
+    list_path(name, lp);
+    int32_t n = myfs_size(lp);
+    if (n < 0) return 0;
+    uint64_t mem = proc_mem_alloc(1);
+    if (!mem || n >= (int32_t)PROC_BLOCK || myfs_read(lp, 0, (void *)mem, (uint32_t)n) != n) {
+        if (mem) proc_mem_free(mem, 1);
+        console_puts("Can't read the list of its files.\n");
+        return 0;
+    }
+    char *list = (char *)mem;
+    list[n] = 0;
+    for (int pass = 0; pass < 2; pass++) {              // files first, then empty folders
+        for (char *p = list; *p; ) {
+            char path[MYFS_PATH_MAX];
+            int k = 0;
+            while (*p && *p != '\n' && k < MYFS_PATH_MAX - 1) path[k++] = *p++;
+            path[k] = 0;
+            if (*p) p++;
+            if (!k) continue;
+            if (pass == 0) {
+                myfs_remove(path);
+                continue;
+            }
+            while (k > 1) {                             // its folders, deepest first
+                while (k > 0 && path[k] != '/') k--;
+                if (k <= 0) break;
+                path[k] = 0;
+                remove_pycache(path);
+                if (myfs_rmdir(path)) break;            // not empty (or gone): stop here
+            }
+        }
+    }
+    proc_mem_free(mem, 1);
+    myfs_remove(lp);
+    return 1;
+}
+
 static void pkg_remove(const char *name) {
     char py[24], v[16];
     if (!valid_prog_name(name)) {
@@ -662,6 +918,7 @@ static void pkg_remove(const char *name) {
     py_name(name, py);
     if (db_version(name, v)) {                          // only scripts pkg put there
         if (myfs_remove(py) == 0) done = 1;
+        if (remove_tree(name)) done = 1;
         db_unset(name);
     }
     if (done) {

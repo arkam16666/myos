@@ -196,6 +196,7 @@
 - [ ] **4.8.6** ทดสอบบน Pi จริง (build แบบ USB, ผ่าน SSH/telnet)
 - [ ] **4.8.7** ตัวแปลง `.deb` → แพ็กเกจ MyOS (แตก `data.tar` เลือกไฟล์ ELF static) เช่น `tools\deb2pkg.py`
 - [ ] **4.8.8** โปรแกรม dynamic (ส่วนใหญ่ใน apt): โหลด `ld-linux-aarch64.so.1` + glibc `.so` ต้องมี mmap ไฟล์จริงแบบแชร์หน้า และไฟล์ใน `/lib`, `/usr/lib`, `/etc` (MyFS v2 มีโฟลเดอร์แล้ว)
+  - ส่วนแรกเสร็จ: โปรแกรม dynamic ของ **musl** (PT_INTERP โหลด `/lib/ld-musl-aarch64.so.1` จากแพ็กเกจ `musl`) ✅ CPython 3.12 (`pkg install python3`, แพ็กเกจแบบ tree) รันบน Pi จริงได้ 2026-11-12; ยังไม่มี glibc (`ld-linux-aarch64.so.1`) และยังไม่ map ไฟล์แบบแชร์หน้า
 - [ ] **4.8.9** thread (clone แบบ CLONE_VM/CLONE_THREAD, futex จริง) สำหรับโปรแกรมที่ใช้ pthread
 - [ ] **4.8.10** socket สำหรับโปรแกรม Linux (ผ่าน lwIP) เช่น `wget`, `nc`
 

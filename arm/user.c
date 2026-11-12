@@ -399,6 +399,7 @@ void user_sync(trapframe_t *f) {
     uint64_t far = read_far();
     if (ec == 0x24 && proc_handle_fault(far, esr)) return;     // first touch of a heap block
     if (ec == 0x20 && proc_current()->linux && proc_handle_fault(far, esr)) return;
+    if (linux_fault_signal(f, ec)) return;          // a Linux program that catches SIGILL/SIGSEGV ...
     if (!console_at_line_start()) console_putc('\n');
     console_puts("Program crashed: ");
     console_puts(exception_name(ec));

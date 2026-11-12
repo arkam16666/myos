@@ -37,7 +37,8 @@ NOTES = "".join(f"line {i} {'apple' if i % 3 == 0 else 'pear'} {100 - i}\n" for 
 
 
 def dynamic_elf():
-    """A (fake) dynamically linked AArch64 program: MyOS must refuse it politely."""
+    """A (fake) dynamically linked AArch64 program whose loader (glibc's) isn't there:
+    MyOS must say so politely."""
     eh = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9)
     eh += struct.pack("<HHIQQQIHHHHHH", 2, 183, 1, 0x400078, 64, 0, 0, 64, 56, 1, 64, 0, 0)
     ph = struct.pack("<IIQQQQQQ", 3, 4, 120, 0x400078, 0x400078, 28, 28, 1)    # PT_INTERP
@@ -127,7 +128,7 @@ def main():
         out = run("lxtest crash")
         check("crash is caught", "Program crashed: Data Abort" in out and "0x0000000030000000" in out, out)
         out = run("dynprog")
-        check("dynamic programs refused", "needs shared libraries" in out, out)
+        check("dynamic program without its loader: a clear message", "needs its dynamic loader /lib/ld-linux-aarch64.so.1" in out, out)
         out = run("strace lxtest exit 3")
         check("strace", "] exit_group(0x3" in out, out)
 
@@ -209,8 +210,8 @@ def main():
             out += read(3)
             out += run("echo x")
         time.sleep(1)
-        after = free_mb()                   # (busybox stays cached in RAM: one 2 MB block)
-        check("all memory back", mem_before - 2 <= after <= mem_before, f"before {mem_before} MB, after {after}")
+        after = free_mb()                   # (up to 4 recent programs stay cached in RAM, 2 MB each here)
+        check("all memory back", mem_before - 8 <= after <= mem_before, f"before {mem_before} MB, after {after}")
     finally:
         s.close()
         qemu.kill()

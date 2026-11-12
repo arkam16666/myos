@@ -26,5 +26,6 @@ void linux_free(proc_t *p);                 // give its memory back
 uint32_t linux_used_blocks(const proc_t *p);
 int linux_interrupt(int tty, proc_t *fg);   // Ctrl+C: 1 = handled, 0 = pass the key on
 void linux_irq_return(trapframe_t *f);      // vectors.S: after an interrupt (signal handlers)
+int linux_fault_signal(trapframe_t *f, uint32_t ec);   // a fault the program has a handler for: 1
 
 #endif

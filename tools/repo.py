@@ -77,7 +77,7 @@ def build():
             continue
         fields = mkpkg.HEADER.unpack(data[:mkpkg.HEADER.size])
         kind_num, version, desc = fields[1], fields[3], fields[4]
-        kind = {mkpkg.KIND_PYTHON: "py", mkpkg.KIND_LINUX: "linux"}.get(kind_num, "app")
+        kind = {mkpkg.KIND_PYTHON: "py", mkpkg.KIND_LINUX: "linux", mkpkg.KIND_TREE: "tree"}.get(kind_num, "app")
         version = version.rstrip(b"\0").decode()
         desc = desc.rstrip(b"\0").decode()
         with open(os.path.join(OUT, name + ".pkg"), "wb") as f:

@@ -1,0 +1,6 @@
+// musl 1.2.5, the C library and dynamic loader of Alpine Linux (MIT licence),
+// from Alpine's musl package, fetched by tools/get-deps.ps1 into third_party/musl.
+// Installed as /lib/ld-musl-aarch64.so.1: arm/linux.c loads it for dynamically
+// linked musl programs (python3, Alpine programs) - read by tools/mkpkg.py
+// @version 1.2.5
+// @description musl C library: runs Linux musl apps

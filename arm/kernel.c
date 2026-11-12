@@ -1611,13 +1611,21 @@ static void cmd_recv(const char *arg) {
 }
 
 // a command's program: "prog" is looked for in the top folder (where pkg
-// installs), then in the current folder; "dir/prog" is a path
+// installs single programs), then /usr/bin and /bin (programs from multi-file
+// packages, like python3), then in the current folder; "dir/prog" is a path
 static int find_program(const char *name, char *out) {
     if (myfs_normalize("/", name, out)) return 0;
     for (const char *s = name; *s; s++) {
         if (*s == '/') return myfs_normalize(proc_cwd(), name, out) == 0 && myfs_stat(out, 0) == MYFS_FILE;
     }
     if (myfs_stat(out, 0) == MYFS_FILE) return 1;
+    static const char *const dirs[] = { "/usr/bin/", "/bin/" };
+    for (unsigned i = 0; i < sizeof dirs / sizeof dirs[0]; i++) {
+        if (strlen(dirs[i]) + strlen(name) >= MYFS_PATH_MAX) break;
+        strcpy(out, dirs[i]);
+        strcat(out, name);
+        if (myfs_version() == 2 && myfs_stat(out, 0) == MYFS_FILE) return 1;
+    }
     return myfs_normalize(proc_cwd(), name, out) == 0 && myfs_stat(out, 0) == MYFS_FILE;
 }
 

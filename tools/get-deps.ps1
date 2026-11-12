@@ -88,6 +88,9 @@ $bins = @(
     @{ Path = 'third_party/busybox/busybox'; Member = 'bin/busybox.static'
        Url = 'https://dl-cdn.alpinelinux.org/alpine/v3.20/main/aarch64/busybox-static-1.36.1-r31.apk'
        Sha256 = '1d8e7a7fc2ed69bdb8eb7be9d962489c21a0f75b72d8a325437c8a09d4cfac70' }  # BusyBox 1.36.1 (GPL-2.0)
+    @{ Path = 'third_party/musl/ld-musl-aarch64.so.1'; Member = 'lib/ld-musl-aarch64.so.1'
+       Url = 'https://dl-cdn.alpinelinux.org/alpine/v3.20/main/aarch64/musl-1.2.5-r4.apk'
+       Sha256 = '71d53cd568d014bf71fa3f76819ddcd68d4f2ec5d9e9203e8ad4dd44667b9e9f' }  # musl 1.2.5 C library + dynamic loader (MIT)
 )
 foreach ($b in $bins) {
     if (Test-Path $b.Path) {
@@ -104,6 +107,36 @@ foreach ($b in $bins) {
     if (-not (Test-Path "$dir/apk/$($b.Member)")) { throw "failed to unpack $apk" }
     Move-Item "$dir/apk/$($b.Member)" $b.Path
     Remove-Item -Recurse -Force "$dir/apk"
+}
+
+# musl's licence, shipped inside the 'musl' package
+$cr = 'third_party/musl/COPYRIGHT'
+if (-not (Test-Path $cr)) {
+    Invoke-WebRequest 'https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5' -OutFile $cr -UseBasicParsing
+    if ((Get-FileHash $cr -Algorithm SHA256).Hash -ne 'F9BC4423732350EB0B3F7ED7E91D530298476F8FEC0C6C427A1C04ADE22655AF') {
+        Remove-Item $cr
+        throw "${cr}: wrong SHA-256"
+    }
+}
+
+# CPython for the Linux layer (package 'python3', needs 'musl'): a prebuilt one from
+# python-build-standalone (aarch64, linked against musl's libc.so only), checked
+# against the SHA-256 its release publishes. Only the program and the standard
+# library are unpacked (the rest has symlinks Windows can't make).
+$py3 = @{ Path = 'third_party/python3'
+          Url = 'https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16%2B20261110-aarch64-unknown-linux-musl-install_only_stripped.tar.gz'
+          Sha256 = '64bb304e59d5d6ed5eaae24e95e743a2420a8897d2f6c854b1438ff9cb47e432' }   # Python 3.12.16 (PSF licence + bundled libraries)
+if (Test-Path "$($py3.Path)/python/bin/python3.12") {
+    Write-Host "$($py3.Path): already there"
+} else {
+    Write-Host "$($py3.Path): downloading..."
+    New-Item -ItemType Directory -Force $py3.Path | Out-Null
+    $tgz = "$($py3.Path)/python.tar.gz"
+    Invoke-WebRequest $py3.Url -OutFile $tgz -UseBasicParsing
+    if ((Get-FileHash $tgz -Algorithm SHA256).Hash -ne $py3.Sha256.ToUpper()) { throw "${tgz}: wrong SHA-256" }
+    tar -xzf $tgz -C $py3.Path python/bin/python3.12 python/lib/python3.12
+    if (-not (Test-Path "$($py3.Path)/python/bin/python3.12")) { throw "failed to unpack $tgz" }
+    Remove-Item $tgz
 }
 
 # Raspberry Pi firmware, only needed for USB boot (arm\usbboot.ps1)

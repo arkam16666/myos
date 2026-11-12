@@ -85,6 +85,9 @@ enum {
 // signals
 #define SIGINT  2
 #define SIGKILL 9
+#define SIGILL  4
+#define SIGTRAP 5
+#define SIGBUS  7
 #define SIGSEGV 11
 #define SIGPIPE 13
 #define SIGTERM 15
@@ -110,6 +113,7 @@ typedef struct {
     int nvma;
     uint64_t brk_start, brk;
     uint64_t code_lo, code_hi;  // executable segments (caches to clean after fork)
+    uint64_t ld_entry;          // a dynamically linked program: where its loader starts
     int8_t fd[NFD];             // file descriptor -> files[] (-1 = closed)
     uint32_t cloexec;           // one bit per descriptor
     sigact_t sig[NSIG];
@@ -268,33 +272,60 @@ static uint8_t *phys(proc_t *p, uint64_t va) {
 }
 
 // ---------------------------------------------------------------
-//  a copy of the last program file in RAM: MyFS reads 512 bytes at a time,
-//  so loading BusyBox (1.1 MB) for every command of a shell pipeline would
-//  be slow on the Pi. The copy is checked against the file (size + 8
-//  sampled pieces) every time, and dropped when memory runs out.
+//  copies of recently run program files in RAM: MyFS reads 512 bytes at a
+//  time, so loading BusyBox (1.1 MB) for every command of a shell pipeline,
+//  or CPython (23 MB, ~20 s on the Pi) for every run, would be slow. Several
+//  files (a program and its dynamic loader ...), least recently used dropped
+//  first. A copy is checked against the file (size + 8 sampled pieces) every
+//  time, and copies are dropped when memory runs out.
 // ---------------------------------------------------------------
-#define ECACHE_MAX (8UL << 20)
+#define ECACHE_MAX   (32UL << 20)           // one file
+#define ECACHE_TOTAL (64UL << 20)           // all of them
+#define ECACHE_N 4
 #define ECACHE_PROBES 8
-static struct {
+typedef struct {
     char path[MYFS_PATH_MAX];
     int32_t size;
     uint8_t *mem;
     int nblocks;
+    uint64_t used;                          // when it was last used (ecache_clock)
     uint8_t probe[ECACHE_PROBES][32];
-} ecache;
+} ecache_t;
+static ecache_t ecaches[ECACHE_N];
+static uint64_t ecache_clock;
 
-static void ecache_drop(void) {
-    if (ecache.mem) proc_mem_free((uint64_t)ecache.mem, ecache.nblocks);
-    ecache.mem = 0;
-    ecache.path[0] = 0;
+static void ecache_free(ecache_t *c) {
+    if (c->mem) proc_mem_free((uint64_t)c->mem, c->nblocks);
+    c->mem = 0;
+    c->path[0] = 0;
+}
+
+static void ecache_drop(const char *path) {         // that file changed
+    for (int i = 0; i < ECACHE_N; i++)
+        if (ecaches[i].mem && !strcmp(ecaches[i].path, path)) ecache_free(&ecaches[i]);
+}
+
+static ecache_t *ecache_oldest(void) {              // a free slot, else the least recently used
+    ecache_t *o = &ecaches[0];
+    for (int i = 0; i < ECACHE_N; i++) {
+        if (!ecaches[i].mem) return &ecaches[i];
+        if (ecaches[i].used < o->used) o = &ecaches[i];
+    }
+    return o;
+}
+
+static int ecache_drop_one(void) {                  // give memory back: 0 if nothing was cached
+    ecache_t *o = 0;
+    for (int i = 0; i < ECACHE_N; i++)
+        if (ecaches[i].mem && (!o || ecaches[i].used < o->used)) o = &ecaches[i];
+    if (!o) return 0;
+    ecache_free(o);
+    return 1;
 }
 
 static uint64_t lx_mem_alloc(int n) {              // pool blocks; the cache goes first if short
     uint64_t m = proc_mem_alloc(n);
-    if (!m && ecache.mem) {
-        ecache_drop();
-        m = proc_mem_alloc(n);
-    }
+    while (!m && ecache_drop_one()) m = proc_mem_alloc(n);
     return m;
 }
 
@@ -303,32 +334,45 @@ static uint32_t probe_off(int i, int32_t size) {
     return (uint32_t)(o + 32 > (uint64_t)(uint32_t)size ? (size > 32 ? size - 32 : 0) : o);
 }
 
-// 1 if ecache holds file now (loading it if it fits)
-static int ecache_get(const char *file) {
+// the cached copy of file (loading it if it fits), or 0
+static ecache_t *ecache_get(const char *file) {
     int32_t size = myfs_size(file);
     if (size <= 0 || (uint64_t)size > ECACHE_MAX) return 0;
     uint32_t n = size < 32 ? (uint32_t)size : 32;
-    if (ecache.mem && ecache.size == size && !strcmp(ecache.path, file)) {
+    for (int k = 0; k < ECACHE_N; k++) {
+        ecache_t *c = &ecaches[k];
+        if (!c->mem || strcmp(c->path, file)) continue;
         uint8_t b[32];
-        int same = 1;
+        int same = c->size == size;
         for (int i = 0; i < ECACHE_PROBES && same; i++)
-            same = myfs_read(file, probe_off(i, size), b, n) == (int)n && !memcmp(b, ecache.probe[i], n);
-        if (same) return 1;
+            same = myfs_read(file, probe_off(i, size), b, n) == (int)n && !memcmp(b, c->probe[i], n);
+        if (same) {
+            c->used = ++ecache_clock;
+            return c;
+        }
+        ecache_free(c);                             // the file changed
     }
-    ecache_drop();
     int nb = (int)(((uint64_t)size + BLOCK - 1) / BLOCK);
+    for (;;) {                                      // room: keep the total under ECACHE_TOTAL
+        uint64_t total = (uint64_t)nb * BLOCK;
+        for (int k = 0; k < ECACHE_N; k++) total += (uint64_t)ecaches[k].nblocks * BLOCK * (ecaches[k].mem != 0);
+        if (total <= ECACHE_TOTAL || !ecache_drop_one()) break;
+    }
+    ecache_t *c = ecache_oldest();
+    ecache_free(c);
     uint64_t m = proc_mem_alloc(nb);
     if (!m) return 0;
     if (myfs_read(file, 0, (void *)m, (uint32_t)size) != size) {
         proc_mem_free(m, nb);
         return 0;
     }
-    ecache.mem = (uint8_t *)m;
-    ecache.nblocks = nb;
-    ecache.size = size;
-    strcpy(ecache.path, file);
-    for (int i = 0; i < ECACHE_PROBES; i++) memcpy(ecache.probe[i], ecache.mem + probe_off(i, size), n);
-    return 1;
+    c->mem = (uint8_t *)m;
+    c->nblocks = nb;
+    c->size = size;
+    c->used = ++ecache_clock;
+    strcpy(c->path, file);
+    for (int i = 0; i < ECACHE_PROBES; i++) memcpy(c->probe[i], c->mem + probe_off(i, size), n);
+    return c;
 }
 
 static int map_block(proc_t *p, uint64_t va) {
@@ -560,7 +604,7 @@ static int file_put(int i) {
     if (--f->refs > 0) return 0;
     int r = 0;
     if (f->type == FT_FILE && f->buf) {
-        if (f->dirty && !strcmp(f->name, ecache.path)) ecache_drop();
+        if (f->dirty) ecache_drop(f->name);
         if (f->dirty && myfs_write(f->name, f->buf, (uint32_t)f->size)) r = -ENOSPC;
         proc_mem_free((uint64_t)f->buf, f->nblocks);
         f->buf = 0;
@@ -1354,6 +1398,24 @@ static void deliver_signals(proc_t *p, trapframe_t *f, int64_t r, uint64_t orig_
     }
 }
 
+// the program's own fault (an instruction this CPU doesn't have, a bad address):
+// Linux turns it into a signal, and some programs catch it on purpose, e.g.
+// OpenSSL tries crypto instructions and catches SIGILL to learn what the CPU
+// can do. 1 = its handler runs now; 0 = no handler (it crashes as before)
+int linux_fault_signal(trapframe_t *f, uint32_t ec) {
+    proc_t *p = proc_current();
+    if (!p || !p->linux) return 0;
+    int sig = ec == 0x00 ? SIGILL : ec == 0x3C ? SIGTRAP : (ec == 0x22 || ec == 0x26) ? SIGBUS
+            : (ec == 0x20 || ec == 0x21 || ec == 0x24 || ec == 0x25) ? SIGSEGV : 0;
+    if (!sig) return 0;
+    lx_t *x = LX(p);
+    if (x->sig[sig].handler == SIG_DFL || x->sig[sig].handler == SIG_IGN || (x->sigmask & SIG_BIT(sig)))
+        return 0;
+    x->pending |= SIG_BIT(sig);
+    deliver_signals(p, f, 0, 0);
+    return 1;
+}
+
 void linux_irq_return(trapframe_t *f) {             // vectors.S: after an interrupt from a program
     proc_t *p = proc_current();
     if (p && p->linux && deliverable(LX(p))) deliver_signals(p, f, 0, 0);
@@ -1899,10 +1961,33 @@ typedef struct {
     ehdr_t eh;
     phdr_t ph[MAX_PH];
     uint64_t bias;
+    char interp[MYFS_PATH_MAX];     // PT_INTERP: its dynamic loader, as found on MyFS ("" = static)
 } elf_t;
+
+// where a program's dynamic loader (PT_INTERP, e.g. /lib/ld-musl-aarch64.so.1)
+// is on MyFS: that path, else /lib/NAME, else /NAME. 0, or -ENOENT
+static int find_interp(const char *want, char *out) {
+    const char *base = want;
+    for (const char *c = want; *c; c++)
+        if (*c == '/') base = c + 1;
+    char tries[3][MYFS_PATH_MAX];
+    strcpy(tries[0], want);
+    strcpy(tries[1], "/lib/");
+    strcpy(tries[2], "/");
+    if (strlen(base) > MYFS_PATH_MAX - 8) return -ENOENT;
+    strcat(tries[1], base);
+    strcat(tries[2], base);
+    for (int i = 0; i < 3; i++) {
+        uint32_t size;
+        if (myfs_normalize("/", tries[i], out) == 0 && myfs_stat(out, &size) == MYFS_FILE) return 0;
+    }
+    out[0] = 0;
+    return -ENOENT;
+}
 
 // read and check the headers; 0 or -errno (with a message for the user if loud)
 static int elf_check(const char *file, elf_t *e, int loud) {
+    e->interp[0] = 0;
     if (myfs_read(file, 0, &e->eh, sizeof e->eh) != (int)sizeof e->eh ||
         memcmp(e->eh.ident, "\177ELF", 4) != 0)
         return -ENOEXEC;
@@ -1919,9 +2004,24 @@ static int elf_check(const char *file, elf_t *e, int loud) {
         uint64_t lo = ~0ull, hi = 0;
         for (int i = 0; i < e->eh.phnum; i++) {
             phdr_t *ph = &e->ph[i];
-            if (ph->type == PT_INTERP) {
-                why = " needs shared libraries (dynamically linked): only static programs run on MyOS.\n";
-                break;
+            if (ph->type == PT_INTERP) {            // dynamically linked: note its loader
+                char want[MYFS_PATH_MAX];
+                if (ph->filesz < 2 || ph->filesz > sizeof want ||
+                    myfs_read(file, (uint32_t)ph->offset, want, (uint32_t)ph->filesz) != (int)ph->filesz) {
+                    why = ": broken ELF file.\n";
+                    break;
+                }
+                want[ph->filesz - 1] = 0;
+                if (find_interp(want, e->interp) < 0) {
+                    if (loud) {
+                        console_puts(file);
+                        console_puts(" needs its dynamic loader ");
+                        console_puts(want);
+                        console_puts(", which isn't on this disk (for Alpine/musl programs: 'pkg install musl').\n");
+                    }
+                    return -ENOENT;
+                }
+                continue;
             }
             if (ph->type != PT_LOAD) continue;
             if (ph->vaddr < lo) lo = ph->vaddr;
@@ -1944,14 +2044,12 @@ static int elf_check(const char *file, elf_t *e, int loud) {
     return 0;
 }
 
-// map the segments into p (whose map is empty); fills entry/brk, AT_PHDR
-static int elf_load(proc_t *p, const char *file, elf_t *e, uint64_t *phdr_va) {
+// map an ELF file's segments at e->bias; *hi = end of the highest one
+static int elf_map(proc_t *p, const char *file, elf_t *e, uint64_t *phdr_va, uint64_t *hi_out) {
     lx_t *x = LX(p);
     uint64_t hi = 0;
-    int cached = ecache_get(file);
+    ecache_t *cached = ecache_get(file);
     *phdr_va = 0;
-    x->code_lo = ~0ull;
-    x->code_hi = 0;
     for (int i = 0; i < e->eh.phnum; i++) {
         phdr_t *ph = &e->ph[i];
         if (ph->type == PT_PHDR) *phdr_va = ph->vaddr + e->bias;
@@ -1966,7 +2064,7 @@ static int elf_load(proc_t *p, const char *file, elf_t *e, uint64_t *phdr_va) {
             uint64_t n = BLOCK - (at & (BLOCK - 1));
             if (n > left) n = left;
             uint8_t *m = phys(p, at);
-            if (cached && off + n <= (uint64_t)ecache.size) memcpy(m, ecache.mem + off, n);
+            if (cached && off + n <= (uint64_t)cached->size) memcpy(m, cached->mem + off, n);
             else if (myfs_read(file, (uint32_t)off, m, (uint32_t)n) != (int)n) return -EIO;
             data_clean_and_invalidate(m, n);
             off += n;
@@ -1981,9 +2079,42 @@ static int elf_load(proc_t *p, const char *file, elf_t *e, uint64_t *phdr_va) {
             *phdr_va = va + (e->eh.phoff - ph->offset);
         if (end > hi) hi = end;
     }
+    *hi_out = hi;
+    __asm__ volatile ("ic iallu; dsb ish; isb" ::: "memory");
+    return 0;
+}
+
+// map the program into p (whose map is empty); fills entry/brk, AT_PHDR. A
+// dynamically linked one also gets its loader (ld-musl ...), mapped in the mmap
+// area: the program starts there, and finds itself through AT_BASE/AT_ENTRY
+static int elf_load(proc_t *p, const char *file, elf_t *e, uint64_t *phdr_va, uint64_t *at_base) {
+    lx_t *x = LX(p);
+    uint64_t hi;
+    x->code_lo = ~0ull;
+    x->code_hi = 0;
+    *at_base = 0;
+    int r = elf_map(p, file, e, phdr_va, &hi);
+    if (r < 0) return r;
     x->brk_start = x->brk = hi;
     x->entry = e->eh.entry + e->bias;
-    __asm__ volatile ("ic iallu; dsb ish; isb" ::: "memory");
+    if (!e->interp[0]) return 0;
+    elf_t ld;
+    if (elf_check(e->interp, &ld, 0) < 0 || ld.eh.type != 3 || ld.interp[0]) return -ENOEXEC;
+    uint64_t lo = ~0ull, top = 0;
+    for (int i = 0; i < ld.eh.phnum; i++) {
+        if (ld.ph[i].type != PT_LOAD) continue;
+        if (ld.ph[i].vaddr < lo) lo = ld.ph[i].vaddr;
+        if (ld.ph[i].vaddr + ld.ph[i].memsz > top) top = ld.ph[i].vaddr + ld.ph[i].memsz;
+    }
+    uint64_t len = PAGE_UP(top) - PAGE_DOWN(lo);
+    uint64_t base = find_gap(x, len);
+    if (!base) return -ENOMEM;
+    ld.bias = base - PAGE_DOWN(lo);
+    uint64_t ld_phdr, ld_hi;
+    r = elf_map(p, e->interp, &ld, &ld_phdr, &ld_hi);
+    if (r < 0) return r;
+    *at_base = ld.bias;
+    x->ld_entry = ld.eh.entry + ld.bias;
     return 0;
 }
 
@@ -2023,7 +2154,7 @@ static int strs_add(strs_t *s, const char *str, uint64_t n) {
 #define AT_EXECFN 31
 
 // the stack Linux programs start with: argc, argv[], 0, envp[], 0, auxv[]
-static int build_stack(proc_t *p, strs_t *s, uint64_t phdr_va, int phnum, const char *execfn) {
+static int build_stack(proc_t *p, strs_t *s, uint64_t phdr_va, int phnum, const char *execfn, uint64_t at_base) {
     lx_t *x = LX(p);
     if (!vma_add(x, STACK_TOP - STACK_SIZE, STACK_TOP)) return -ENOMEM;
     uint64_t blk = STACK_TOP - BLOCK;
@@ -2064,7 +2195,7 @@ static int build_stack(proc_t *p, strs_t *s, uint64_t phdr_va, int phnum, const 
     w[k++] = 0;
     uint64_t aux[][2] = {
         { AT_PHDR, phdr_va }, { AT_PHENT, sizeof(phdr_t) }, { AT_PHNUM, (uint64_t)phnum },
-        { AT_PAGESZ, PAGE }, { AT_BASE, 0 }, { AT_FLAGS, 0 }, { AT_ENTRY, x->entry },
+        { AT_PAGESZ, PAGE }, { AT_BASE, at_base }, { AT_FLAGS, 0 }, { AT_ENTRY, x->entry },
         { AT_UID, 0 }, { AT_EUID, 0 }, { AT_GID, 0 }, { AT_EGID, 0 },
         { AT_PLATFORM, plat_va }, { AT_HWCAP, 0x3 /* FP ASIMD */ }, { AT_CLKTCK, TICKS_PER_SECOND },
         { AT_SECURE, 0 }, { AT_RANDOM, rand_va }, { AT_EXECFN, fn_va }, { AT_NULL, 0 },
@@ -2171,9 +2302,10 @@ int linux_run(const char *file, const char *argv0, const char *args, int backgro
     x->trace = trace_next;
     trace_next = 0;
     strcpy(x->exe, file);
-    uint64_t phdr_va;
-    int r = elf_load(p, file, &e, &phdr_va);
-    if (r == 0) r = build_stack(p, &s, phdr_va, e.eh.phnum, argv0);
+    uint64_t phdr_va, at_base;
+    int r = elf_load(p, file, &e, &phdr_va, &at_base);
+    if (r == 0) r = build_stack(p, &s, phdr_va, e.eh.phnum, argv0, at_base);
+    if (r == 0 && at_base) x->entry = x->ld_entry;      // start in the dynamic loader
     if (r < 0) {
         console_puts(r == -ENOMEM ? "Out of memory.\n" : r == -EIO ? "Disk error!\n" : "Can't start it.\n");
         linux_free(p);
@@ -2397,9 +2529,10 @@ static int64_t sys_execve(proc_t *p, trapframe_t *f, uint64_t upath, uint64_t ua
         if (x->sig[i].handler != SIG_IGN) memset(&x->sig[i], 0, sizeof x->sig[i]);
     x->pending = 0;
     strcpy(x->exe, file);
-    uint64_t phdr_va;
-    r = elf_load(p, file, &e, &phdr_va);
-    if (r == 0) r = build_stack(p, &s, phdr_va, e.eh.phnum, path);
+    uint64_t phdr_va, at_base;
+    r = elf_load(p, file, &e, &phdr_va, &at_base);
+    if (r == 0) r = build_stack(p, &s, phdr_va, e.eh.phnum, path, at_base);
+    if (r == 0 && at_base) x->entry = x->ld_entry;
     proc_mem_free(scratch, 1);
     proc_flush_tlb();
     if (r < 0) {
@@ -2778,7 +2911,7 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
             }
             if (kind != R_FILE) return -EPERM;
             if (a2 & AT_REMOVEDIR) return myfs_size(name) < 0 ? -ENOENT : -ENOTDIR;
-            if (!strcmp(name, ecache.path)) ecache_drop();
+            ecache_drop(name);
             return (kind = myfs_remove(name)) ? fs_err(kind) : 0;
         case 38: case 276:                          // renameat, renameat2(olddir, old, newdir, new)
             if ((kind = upath(p, a1, name, &fdno)) < 0) return kind;
@@ -2786,7 +2919,8 @@ static int64_t dispatch(proc_t *p, trapframe_t *f, uint64_t n, uint64_t a0, uint
             if ((kind = upath(p, a3, name2, &fdno)) < 0) return kind;
             if (kind != R_FILE && kind != R_DIR) return -EPERM;
             if (!strcmp(name, name2)) return 0;
-            if (!strcmp(name, ecache.path) || !strcmp(name2, ecache.path)) ecache_drop();
+            ecache_drop(name);
+            ecache_drop(name2);
             if (myfs_stat(name2, 0) == MYFS_FILE && myfs_stat(name, 0) == MYFS_FILE) myfs_remove(name2);
             return (kind = myfs_rename(name, name2)) ? fs_err(kind) : 0;
         case 34:                                    // mkdirat(dirfd, path, mode)

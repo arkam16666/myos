@@ -25,14 +25,17 @@ MYFS_MB = 8
 
 
 def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_MB, myfs_mb=MYFS_MB,
-          boot_mb=None, second_type=0x83, second_fill=0):
+          boot_mb=None, second_type=0x83, second_fill=0, second_setup=None):
     """returns {"myfs": (first sector, sectors), "kernel": (first sector, sectors) or None,
                 "second": (first sector, sectors) or None}
     version: MyFS format of MYFS.IMG; setup(fs): called to add more (folders...)
     boot_mb: make the FAT partition this big and put a second partition (type
     second_type, like a Raspberry Pi OS root file system) in the rest of the card,
     its first second_fill MB filled with 0xFF (old data). The image is written
-    sparsely, so big cards are fine."""
+    sparsely, so big cards are fine.
+    second_setup(fs): make partition 2 a MyFS v2 partition (type 0xDA, like after
+    'fsexpand') and fill it; MYFS.IMG stays as the old copy. Big file systems
+    belong there: MyOS walks myfs.img's FAT chain at boot, slow in QEMU."""
     total = card_mb * 1024 * 1024 // SECTOR
     part_sectors = (boot_mb * 2048 if boot_mb else total) - PART_START
     # FAT32 with one sector per cluster
@@ -71,8 +74,8 @@ def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_M
     if boot_mb:
         start2 = (PART_START + part_sectors + 8191) // 8192 * 8192
         second = (start2, total - start2)
-        mbr[462:478] = struct.pack("<B3sB3sII", 0x00, b"\xFE\xFF\xFF", second_type, b"\xFE\xFF\xFF",
-                                   start2, total - start2)
+        mbr[462:478] = struct.pack("<B3sB3sII", 0x00, b"\xFE\xFF\xFF", 0xDA if second_setup else second_type,
+                                   b"\xFE\xFF\xFF", start2, total - start2)
         if second_fill:
             put(start2, b"\xFF" * (second_fill * 1024 * 1024))
     mbr[510:512] = b"\x55\xAA"
@@ -125,7 +128,8 @@ def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_M
         kentry = bytearray(32)
         kentry[0:11] = b"MYOS8   IMG"
         kentry[11] = 0x20
-        struct.pack_into("<H", kentry, 26, 3 + file_clusters)
+        struct.pack_into("<HH", kentry, 20, (3 + file_clusters) >> 16, 0)       # cluster high
+        struct.pack_into("<H", kentry, 26, (3 + file_clusters) & 0xFFFF)  # cluster low
         struct.pack_into("<I", kentry, 28, len(kdata))
         root[64:96] = kentry
     put(data_start, root)                                   # cluster 2
@@ -141,6 +145,26 @@ def build(out_path, files=(), kernel=None, version=2, setup=None, card_mb=CARD_M
         for lba, data in sorted(chunks):
             f.seek(lba * SECTOR)
             f.write(data)
+    if second and second_setup:                             # MyFS v2 in partition 2
+        part = os.path.join(tempfile.mkdtemp(), "part2.img")
+        with open(part, "wb") as f:
+            f.truncate(second[1] * SECTOR)
+        disk = myfs.Disk(part)
+        myfs.format_v2(disk)
+        fs2 = myfs.open_fs(disk)
+        second_setup(fs2)
+        disk.close()
+        with open(part, "rb") as src, open(out_path, "r+b") as dst:
+            dst.seek(second[0] * SECTOR)
+            while True:
+                chunk = src.read(8 << 20)
+                if not chunk:
+                    break
+                if chunk.count(0) == len(chunk):            # keep it sparse
+                    dst.seek(len(chunk), 1)
+                else:
+                    dst.write(chunk)
+        os.remove(part)
     return {"myfs": (myfs_lba, file_clusters),
             "kernel": (kernel_lba, kernel_clusters) if kdata else None,
             "second": second}

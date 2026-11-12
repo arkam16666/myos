@@ -320,6 +320,21 @@ strace PROG ...              รันโปรแกรม Linux แล้ว�
 - ข้อจำกัด: รันได้เฉพาะโปรแกรม static (ไฟล์จาก `apt` ส่วนใหญ่เป็น dynamic ใช้ glibc + ไลบรารี `.so` ยังรันไม่ได้), ไม่มี thread, ไม่มี socket/network สำหรับโปรแกรม Linux, ผู้ใช้เป็น root (uid 0) คนเดียว, นาฬิกาเริ่มที่ปี 1970 (ตั้งด้วย `date -s` ได้)
 - ทดสอบใน QEMU: `python tests\qemu_linux.py` (ตัวโหลด ELF, system call ด้วย `tests\linux\lxtest.c`, BusyBox, sh, vi, signal, /proc)
 
+**Python 3 ตัวจริง (CPython 3.12):** `pkg install python3` ได้ Python ตัวเดียวกับบนคอม (มาตรฐานครบ: `dataclasses`, `typing`, `sqlite3`, `json`, `decimal`, `hashlib`, `zlib`, f-string ฯลฯ) คู่กับ `python` (MicroPython) เดิมที่เร็วกว่าและกิน RAM น้อยกว่า
+```
+pkg install python3          ดาวน์โหลด 12.8 MB จาก GitHub (ติดตั้ง musl ให้เอง) แตกเป็น 1,042 ไฟล์ (~40 MB)
+python3                      หน้า >>> ของ CPython
+python3 app.py a b           รันสคริปต์ (sys.argv ได้ ['app.py', 'a', 'b'])
+python3 -c "print(6*7)"
+pkg remove python3           ลบทุกไฟล์ที่ติดตั้ง (และ __pycache__ ที่ Python สร้างไว้)
+```
+- ตัวโปรแกรมมาจาก [python-build-standalone](https://github.com/astral-sh/python-build-standalone) (รุ่น ARM64 + musl) `tools\get-deps.ps1` ดาวน์โหลดและตรวจ SHA-256 ให้ แล้ว `arm\build.ps1` (กับ `ports\python3\stage.py`) ทำเป็นแพ็กเกจ `python3` อยู่ที่ `/usr/bin/python3` ไลบรารีอยู่ที่ `/usr/lib/python3.12` (ตัดส่วน GUI, test, IDLE ออก)
+- เป็นโปรแกรม Linux แบบ dynamic: MyOS โหลดตัวโหลดของ musl (`/lib/ld-musl-aarch64.so.1` จากแพ็กเกจ `musl` ของ Alpine) ให้เอง โปรแกรม musl อื่นจาก Alpine ที่ไม่ต้องใช้ socket/thread ก็น่าจะรันได้ด้วย
+- เปิดครั้งแรกหลังบูตช้า (~20 วินาที: อ่านตัวโปรแกรม 23 MB จาก SD card) ครั้งต่อไป ~0.4 วินาที เพราะ MyOS เก็บสำเนาโปรแกรมที่รันล่าสุด 4 ตัวไว้ใน RAM (รวมไม่เกิน 64 MB และคืนให้ทันทีถ้า RAM ไม่พอ)
+- ยังใช้ไม่ได้: `pip install` จากเน็ต, `requests`/`urllib`/`socket`, `asyncio` (ต้องใช้ socketpair) และ `threading` (MyOS ยังไม่มี socket และ thread สำหรับโปรแกรม Linux) ส่วน `pip install ไฟล์.whl` ของแพ็กเกจ Python ล้วนน่าจะใช้ได้
+- ทดสอบใน QEMU: `python tests\qemu_python3.py` (ติดตั้งจากไฟล์แพ็กเกจบนการ์ด, รันสคริปต์ทดสอบ, ลบออก)
+- แพ็กเกจชนิดใหม่ "files" (kind 4): tar.gz ที่แตกจาก `/` ได้หลายไฟล์และโฟลเดอร์ ใหญ่เกิน 8 MB ได้ (`python tools\mkpkg.py โฟลเดอร์ ไฟล์.info ชื่อ.pkg`)
+
 **ส่งไฟล์เข้า Pi ผ่าน USB** (แพ็กเกจ, ไฟล์ `.py` ฯลฯ):
 ```powershell
 powershell -ExecutionPolicy Bypass -File arm\push-pi.ps1 -Packages            # แพ็กเกจทั้งหมดสำหรับ Pi
@@ -396,6 +411,8 @@ myos\
 | [QuickJS](https://github.com/bellard/quickjs) | แพ็กเกจ `node` (JavaScript) | MIT |
 | [SQLite](https://www.sqlite.org) | แพ็กเกจ `sqlite3` | Public domain |
 | [BusyBox](https://busybox.net/) (`busybox-static` จาก Alpine Linux) | คำสั่งแบบ Linux บน MyOS Pi | GPL-2.0 |
+| [CPython](https://www.python.org/) 3.12 build จาก [python-build-standalone](https://github.com/astral-sh/python-build-standalone) | แพ็กเกจ `python3` | PSF License (+ ไลบรารีที่รวมมา เช่น OpenSSL Apache-2.0, SQLite public domain, zlib, libffi MIT; ดู `/usr/lib/python3.12/LICENSE.txt`) |
+| [musl](https://musl.libc.org/) 1.2.5 (จาก Alpine Linux) | แพ็กเกจ `musl`: ตัวโหลดของโปรแกรม Linux แบบ dynamic | MIT (`/usr/share/doc/musl/COPYRIGHT`) |
 
 ซอร์สเหล่านี้ไม่ได้อยู่ใน repo นี้ (`tools/get-deps.ps1` ดาวน์โหลดให้) แต่ละตัวใช้สัญญาอนุญาตของตัวเอง และแพ็กเกจที่ build จากมัน เช่น `busybox.pkg` (GPL-2.0) ก็อยู่ใต้สัญญาอนุญาตนั้นด้วย
 
