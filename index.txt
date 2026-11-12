@@ -1,0 +1,57 @@
+# MyOS package list: name version kind size sha256 description
+2048 1.0 py 2936 bea53a71b3a5572fd5a15cb6f74ddedf6c5a1112906b02cacbb67f59b65548a0 2048 sliding tile puzzle (arrow keys)
+banner 1.0 py 2475 5a8500ba63b3ccb8d225a366204598b5bf30a0369c6f077867448e33c3943615 Print text in big letters
+basic 1.0 py 16279 1b89e4be25c70edd2b45f0adb665bc0b164bc453a9dd95a23d0b6422de558c59 BASIC language (line numbers, GOTO...)
+bc 1.0 py 31880 9b5810bdff1a2db6d133c28a4306a6d633d3cc577c935d254883b95008de8611 bc calculator: huge numbers, scale, -l
+bf 1.0 py 2130 fdf7aa1497f94b9609d9eae84a39198bcb34bde52c984282a79f146ad752d4e7 Brainf*ck language interpreter
+blackjack 1.0 py 2635 1f8e63b113465295bef1b94dda21c0b8e1d27aa1360f1d25eb6c9e06e4db0056 Blackjack card game with chips
+blocks 1.0 py 4937 4e18a815d8e622dfe1e1e401f64c8279b6db03f8d9b8e5e480cef359d0830ca6 Falling blocks puzzle (arrows, space)
+busybox 1.36.1 linux 1116072 19a015e8b4f79dc0aa1130a61f95e9482207a89b738c658fd6c82dacde9b02f9 BusyBox: ls grep sed awk vi sh and 300 more
+cal 1.0 py 3879 edba9c046a2aaaf73d3c8e61c3d54b209328d6094d3d9f1df2152da6ca60e733 Calendar: a month, a year, or browse
+calc 1.1 app 2622 dcd3f8b09502fdbde1943996dfeb1dcb98389b1dc8835349a071a236ce8eb6d1 Calculator: 12 + 34, 7 * 6, 100 / 3
+cdemo 1.0 app 2374 37df015e2aa161fe979bba573e3d2c65d7aed9bd521fa47e7cf30f6730f27734 A program written in C
+chess 1.0 app 21496 da2f73fc91a31d842654219e1952ae9450bab197d4c7f13c53954ce4f861dacb Chess against the computer (e2e4 moves)
+countdown 1.1 app 2188 24fd5e2856441dd7add125bcb2929adf20ddc37ec7656864e43724963ce1e419 Counts down and launches a rocket
+cowsay 1.0 py 1208 32889f6d04956a75d2767b780857e3407adc74feeab00ff4dfd87fd83efa1d54 A cow says your message
+crashme 1.1 app 2129 18c070f376e27f4149340f092ab08504692872ef66ec2087457d0451e6fc4fcc Breaks the rules to show the OS survives
+dice 1.0 py 1379 70103237c4ec5b0c9236f59e16bf5be83608b05d5edda50f7d2c28f707e851ba Roll dice (2d6, 1d20, ...)
+edit 1.0 py 5699 12ef6d6bdfc01fbbaa24184d3c57cc42ec53fbafff6d6f57564a5b861a2cfc28 Full-screen text editor (like nano)
+forth 1.0 py 9199 f24e802523bbab12c12b84e6603a68ecd786cc775e85dc98f37ccfa89c7ab154 Forth language (stack based)
+fortune 1.1 app 2472 5d6856de0d6cf2a9e437eef8147e853e2188ef1d1b756a3b340196b95aa70990 Shows a random saying
+four 1.0 py 3757 7d095377959bd3ab9fc0b99fa393a0a97cf7574a15b6eb0e6b01c9f06677b77f Connect Four vs the computer
+guess 1.1 app 2477 97a7f1ac99b78929fbfc9c2ada990303e76dcf3ce4026838e61f8bba1f9f722c Guess the number between 1 and 100
+hangman 1.0 py 1913 7d9a8c9def8abea2882796b972200455fe65400d9d9fd83077effdbd4d16dd88 Hangman word guessing game
+hanoi 1.0 py 2555 83a908a2b0fc9860c13bd98fdbb3f9e7732477de0e5978402165088437994c57 Towers of Hanoi: watch or play
+htop 2.2 py 14331 ec3ce0410ae6c4ac4d79e515dc732dc5e8fffc9f5f1ca81684c08c9b38525962 Process viewer: CPU, memory, programs
+invaders 1.0 py 6327 59aba003d1dead764a1dce7477189b2917d640ac7bfd0a491a784d32a799373e Space invaders: shoot the aliens (arrows)
+java 1.0 app 631552 02cb7d433b3713d4f148a44e0cb282936a1f637fc1ad5d14455f8ce1d04d9280 Java (runs .class/.jar files from javac)
+life 1.0 py 1734 545e16375b75086cb94b12535c6664a064f368d578f75642e55431fa4bbca682 Conway's Game of Life animation
+lua 5.4.7 app 284672 3f36d42ecbb7c4576442345fc41cca717f6e685cc1b7c2c0595da49c4da16e26 Lua 5.4 programming language
+mandel 1.0 py 1798 db0e3e354b9fbb549e809ec4f196f1a1db34408d1d0a9b464a1d9581966262a9 Mandelbrot fractal explorer (zoom in/out)
+mathquiz 1.0 py 1457 2f9ea28af3ea7d605a357d685429369e92e4c631ed51e4eae76375d7bdb300aa Mental arithmetic quiz against the clock
+matrix 1.0 py 1200 a6f08c8887fd25722c3f80b9d3d15706afbc91747bbe095d31a6c0e2d89341f1 Digital rain screen saver
+maze 1.0 py 2549 a3909ba5d25511a7eda5afb9237f1377b855d4638a960251503b6dbed902b08f Random maze to walk through (arrows)
+mines 1.0 py 3641 8462cc70e95c98ab77a8ec8b36ed175b821cc7cd913fcda2725d40595194fcd7 Minesweeper (arrows, space opens, f flags)
+mip 1.1 py 684 50bdf9436fe06d149b7413581d3fe9bac0e73c064bd64a5c957d27d136a5aa9d Same as pip (MicroPython's name for it)
+musl 1.2.5 tree 418519 ee702dc6d00b4886ca9f51cddf88da7c12bde1cb2a18fce3c7c67f20b1a279fe musl C library: runs Linux musl apps
+neofetch 1.0 py 3275 cc1eb66a98cdc5bb9ae2b933cfc3f0adf172835d4050c2f0ea3e4ddc48447192 System information next to a logo
+node 2026.6.4.1 app 750064 43f140e03d316837f039ecceec0cc49f10de6ade6fda3aaec74a10c1244e7798 JavaScript language (QuickJS, Node-like)
+npm 1.0 app 778984 59db79c25326178e7f7698ea9fac425b571b3e03530898364f075d8b7666a5ef npm: JavaScript packages for node
+pip 1.0 py 16742 232509320a2531be1550c4f85f20537f2773fd89a69a8104571b7422d82ebee2 Install Python libraries (micropython-lib)
+primes 1.0 py 1690 e0fe4bc552c5697bd26f1836e7249a34294c8a7afcd1afa333a7819a460becb2 Prime numbers: list, test, factorize
+python 1.10 app 244184 d24f60f1f56130862ca803ba8c094067bc6c38b28eaecd5fdcecc25a0590fcdd MicroPython: Python 3 (+ myos module)
+python3 3.12.16-1 tree 12861184 0429aa082819de157f2eaaa0a034b7ad069428e5e56bdfe87b2cb0044b65cb63 Python 3.12 (CPython): python3 command
+rps 1.0 py 1533 7337d41296455334b964a4091809662cfa83002f0e1ac6f3e34129f0c6c6ac79 Rock paper scissors (the computer learns)
+scheme 1.0 py 11048 745ede262bf1ba4da4ea193cd6caaa10f5a1f943c5bef3f51e257bd613dea8c9 Scheme (Lisp) language
+sl 1.0 py 3319 ade1fbe637cb139a44e1f28ad06c3ff721e9852b9e10f3d468057c702fb002d1 Steam locomotive (when you mistype ls)
+snake 1.0 py 3457 8b0ddf3fb0432fa49b092578b508fb1726a9bf3b3c67b5ed69a02d232e30a17b Snake game (arrow keys or WASD)
+sokoban 1.0 py 6316 103712df71d2adad54457c3b7d6b2343d74a3e61dca3088e7d772f6ebc13babd Sokoban box-pushing puzzle, 9 levels
+sqlite3 3.54.1 app 736808 17176897d749c7a5eafef7c72389d08a34478e11df72f695319c1b73f7f34d2f SQL database (SQLite) and sqlite3 shell
+stopwatch 1.0 py 3032 dc2ae65aec7952bf4247051735ffd0fa4d5d3b24cd83cb3dcb4c817987525636 Big-digit stopwatch and countdown timer
+sudoku 1.0 py 9511 8f4adcbf54caa9009caddd439fd569b4714fe9c387119b70ff02fe452893c735 Sudoku puzzles (easy, medium, hard)
+todo 1.0 py 2060 80be8582fd3693133fcff3b838796b313b7d09821c7e3abe3012651323173f18 To-do list saved on the disk
+ttt 1.0 py 2182 09403a70e787cada20341c49642e0e932ed60aca3a1313601e62a02a96f45a66 Tic-tac-toe vs an unbeatable computer
+typetest 1.0 py 1601 4f734a37daa6f8391596698edb3fceacf60d53d46dade482736069cca16cb808 Typing speed test (words per minute)
+units 1.0 py 2492 cd9ab1c2f75f848b0c647b7644e7d5111090d384335eaf0a268296a65b9a08de Unit converter (length, weight, temp...)
+wifiman 1.0 py 6606 9079ba5119b8b41cd78abbd0c2d1b12fb99224df2b2f9fa1ee7979fce2341921 Wi-Fi manager: scan, join, status
+words 1.0 py 2140 dedec71d857000c80f1e2d3cd6846b82a3678e73c00d508ac980f8d53a99cb92 Guess the 5-letter word in 6 tries
